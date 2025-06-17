@@ -214,7 +214,81 @@ class PipelineApiService {
         return `pipeline_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
 
-
+    async runParallelWorkers(pipelineId, targetDirectory, factory, totalTasks) {
+        const MAX_WORKERS = 50;
+        let tasksProcessed = 0;
+        
+        // Get all pending tasks first
+        const db = await factory.getSqliteConnection();
+        const allTasks = await db.all("SELECT * FROM work_queue WHERE status = 'pending' ORDER BY id");
+        await db.close();
+        
+        if (allTasks.length === 0) {
+            this.updatePipelineStatus(pipelineId, {
+                'progress.workerAgent.status': 'completed'
+            }, '✅ Phase 5 Complete: No tasks to process');
+            return;
+        }
+        
+        // Create one worker per task (up to MAX_WORKERS)
+        const numWorkers = Math.min(MAX_WORKERS, allTasks.length);
+        this.updatePipelineStatus(pipelineId, {}, `🚀 Starting ${numWorkers} parallel workers for ${allTasks.length} files...`);
+        
+        // Create worker function that processes a specific task
+        const createWorker = async (workerId, task) => {
+            const workerAgent = await factory.createWorkerAgent(targetDirectory);
+            
+            this.updatePipelineStatus(pipelineId, {
+                'progress.workerAgent.currentFile': task.file_path
+            }, `🔍 [Worker ${workerId}] Processing: ${task.file_path} (${workerId}/${allTasks.length})`);
+            
+            try {
+                // Claim the specific task
+                const claimedTask = await workerAgent.claimSpecificTask(task.id, `worker-${workerId}`);
+                if (claimedTask) {
+                    await workerAgent.processTask(claimedTask);
+                    tasksProcessed++;
+                    
+                    this.updatePipelineStatus(pipelineId, {
+                        'progress.workerAgent.tasksProcessed': tasksProcessed
+                    }, `✅ [Worker ${workerId}] Completed: ${path.basename(task.file_path)} (${tasksProcessed}/${allTasks.length})`);
+                } else {
+                    this.updatePipelineStatus(pipelineId, {}, 
+                        `⚠️ [Worker ${workerId}] Task already claimed: ${path.basename(task.file_path)}`);
+                }
+            } catch (error) {
+                this.updatePipelineStatus(pipelineId, {}, 
+                    `❌ [Worker ${workerId}] Failed: ${path.basename(task.file_path)} - ${error.message}`);
+            }
+        };
+        
+        // Start all workers simultaneously, each with their assigned task
+        const workers = [];
+        for (let i = 0; i < numWorkers; i++) {
+            const task = allTasks[i];
+            workers.push(createWorker(i + 1, task));
+        }
+        
+        // If we have more tasks than workers, handle remaining tasks
+        if (allTasks.length > numWorkers) {
+            this.updatePipelineStatus(pipelineId, {}, 
+                `⚠️ Note: ${allTasks.length - numWorkers} tasks will be processed after initial batch completes`);
+            
+            // Process remaining tasks after first batch
+            const remainingTasks = allTasks.slice(numWorkers);
+            for (const task of remainingTasks) {
+                workers.push(createWorker(workers.length + 1, task));
+            }
+        }
+        
+        // Wait for all workers to complete
+        await Promise.all(workers);
+        
+        this.updatePipelineStatus(pipelineId, {
+            'progress.workerAgent.status': 'completed',
+            'progress.workerAgent.currentFile': null
+        }, `✅ Phase 5 Complete: All ${allTasks.length} files processed in parallel`);
+    }
 
     async startPipelineAsync(pipelineId, targetDirectory) {
         const factory = new ProductionAgentFactory();
@@ -288,38 +362,13 @@ class PipelineApiService {
                 'progress.workerAgent.tasksTotal': queuedFiles[0].count
             }, `✅ Phase 4 Complete: Found ${totalFiles[0].count} files, queued ${queuedFiles[0].count} for analysis`);
             
-            // Phase 5: Run WorkerAgent(s)
+            // Phase 5: Run WorkerAgent(s) in parallel
             this.updatePipelineStatus(pipelineId, {
                 phase: 'worker_analysis',
                 'progress.workerAgent.status': 'running'
-            }, '🤖 Phase 5: Starting file analysis with DeepSeek LLM...');
+            }, `🤖 Phase 5: Starting parallel file analysis with up to 50 workers...`);
             
-            const workerAgent = await factory.createWorkerAgent(targetDirectory);
-            let tasksProcessed = 0;
-            let task;
-            
-            while ((task = await workerAgent.claimTask('api-worker'))) {
-                this.updatePipelineStatus(pipelineId, {
-                    'progress.workerAgent.currentFile': task.file_path
-                }, `🔍 Processing: ${task.file_path} (${tasksProcessed + 1}/${queuedFiles[0].count})`);
-                
-                try {
-                    await workerAgent.processTask(task);
-                    tasksProcessed++;
-                    
-                    this.updatePipelineStatus(pipelineId, {
-                        'progress.workerAgent.tasksProcessed': tasksProcessed
-                    }, `✅ Completed: ${path.basename(task.file_path)} (${tasksProcessed}/${queuedFiles[0].count})`);
-                } catch (error) {
-                    this.updatePipelineStatus(pipelineId, {}, 
-                        `❌ Failed: ${path.basename(task.file_path)} - ${error.message}`);
-                }
-            }
-            
-            this.updatePipelineStatus(pipelineId, {
-                'progress.workerAgent.status': 'completed',
-                'progress.workerAgent.currentFile': null
-            }, `✅ Phase 5 Complete: Worker analysis finished - ${tasksProcessed} files processed`);
+            await this.runParallelWorkers(pipelineId, targetDirectory, factory, queuedFiles[0].count);
             
             // Phase 6: Run GraphIngestorAgent
             this.updatePipelineStatus(pipelineId, {

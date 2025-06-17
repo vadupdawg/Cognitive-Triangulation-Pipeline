@@ -62,6 +62,24 @@ class WorkerAgent {
           [taskToClaim.id]
       );
     }
+
+    async claimSpecificTask(taskId, workerId) {
+      const claimResult = await this.db.run(
+          `UPDATE work_queue SET status = 'processing', worker_id = ? WHERE id = ? AND status = 'pending'`,
+          [workerId, taskId]
+      );
+  
+      if (claimResult.changes === 0) {
+          // The task was already claimed by another worker or doesn't exist
+          return null;
+      }
+  
+      // Now that we've successfully claimed it, get the full details
+      return await this.db.get(
+          'SELECT id, file_path, content_hash FROM work_queue WHERE id = ?',
+          [taskId]
+      );
+    }
   async processTask(task) {
     try {
       const fileContent = await this._readFileContent(task.file_path);
