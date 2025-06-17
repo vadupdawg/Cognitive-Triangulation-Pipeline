@@ -9,6 +9,7 @@
 const { ScoutAgent, RepositoryScanner, ChangeAnalyzer, QueuePopulator } = require('./src/agents/ScoutAgent');
 const { WorkerAgent } = require('./src/agents/WorkerAgent');
 const { processBatch } = require('./src/agents/GraphIngestorAgent');
+const ProductionAgentFactory = require('./src/utils/productionAgentFactory');
 const sqliteDb = require('./src/utils/sqliteDb');
 const neo4jDriver = require('./src/utils/neo4jDriver');
 const fs = require('fs-extra');
@@ -82,6 +83,10 @@ async function main() {
   const command = process.argv[2];
 
   try {
+    // Clear all databases at pipeline start for fresh run
+    const factory = new ProductionAgentFactory();
+    await factory.clearAllDatabases();
+
     switch (command) {
       case 'scout':
         await runScout();

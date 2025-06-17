@@ -105,10 +105,11 @@ class ProductionAgentFactory {
 
     /**
      * Create a production WorkerAgent with DeepSeek integration
+     * @param {string} targetDirectory - Directory where files are located (optional)
      */
-    async createWorkerAgent() {
+    async createWorkerAgent(targetDirectory = null) {
         const db = await this.getSqliteConnection();
-        return new WorkerAgent(db, fs, this.deepseekClient);
+        return new WorkerAgent(db, fs, this.deepseekClient, targetDirectory);
     }
 
     /**
@@ -139,6 +140,70 @@ class ProductionAgentFactory {
             console.log('Database initialized with schema');
         } finally {
             await db.close();
+        }
+    }
+
+    /**
+     * Clear all databases (SQLite and Neo4j) for a fresh pipeline start
+     */
+    async clearAllDatabases() {
+        console.log('🗑️  Clearing all databases for fresh pipeline start...');
+        
+        try {
+            // Clear SQLite database
+            await this.clearSqliteDatabase();
+            
+            // Clear Neo4j database
+            await this.clearNeo4jDatabase();
+            
+            console.log('✅ All databases cleared successfully');
+        } catch (error) {
+            console.error('❌ Error clearing databases:', error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * Clear all SQLite tables
+     */
+    async clearSqliteDatabase() {
+        console.log('  📊 Clearing SQLite database...');
+        const db = await this.getSqliteConnection();
+        try {
+            await db.exec('BEGIN TRANSACTION');
+            
+            // Clear all tables in the correct order (respecting foreign key constraints)
+            await db.exec('DELETE FROM failed_work');
+            await db.exec('DELETE FROM analysis_results');
+            await db.exec('DELETE FROM refactoring_tasks');
+            await db.exec('DELETE FROM work_queue');
+            await db.exec('DELETE FROM file_state');
+            
+            // Reset auto-increment counters
+            await db.exec('DELETE FROM sqlite_sequence WHERE name IN ("work_queue", "analysis_results", "refactoring_tasks", "failed_work", "file_state")');
+            
+            await db.exec('COMMIT');
+            console.log('  ✅ SQLite database cleared');
+        } catch (error) {
+            await db.exec('ROLLBACK');
+            throw error;
+        } finally {
+            await db.close();
+        }
+    }
+
+    /**
+     * Clear Neo4j database
+     */
+    async clearNeo4jDatabase() {
+        console.log('  🔗 Clearing Neo4j database...');
+        const session = neo4jDriver.session({ database: process.env.NEO4J_DATABASE || 'backend' });
+        try {
+            // Delete all nodes and relationships
+            await session.run('MATCH (n) DETACH DELETE n');
+            console.log('  ✅ Neo4j database cleared');
+        } finally {
+            await session.close();
         }
     }
 

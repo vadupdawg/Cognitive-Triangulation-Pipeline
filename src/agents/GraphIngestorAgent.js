@@ -231,6 +231,7 @@ async function createRelationships(transaction, relsByType) {
 
 /**
  * Updates the status of a batch of tasks in a specified table.
+ * @param {sqlite.Database} db The SQLite database connection.
  * @param {string} tableName The name of the table to update.
  * @param {string} status The new status to set.
  * @param {Array<number>} ids The IDs of the tasks to update.
@@ -241,7 +242,9 @@ async function updateTaskStatus(db, tableName, status, ids) {
   }
   const placeholders = ids.map(() => '?').join(',');
   const query = `UPDATE ${tableName} SET status = ? WHERE id IN (${placeholders})`;
-  await db.run(query, [status, ...ids]);
+  const stmt = await db.prepare(query);
+  await stmt.run([status, ...ids]);
+  await stmt.finalize();
 }
 
 

@@ -30,10 +30,11 @@ const CHUNK_SIZE_KB = 120;
 const CHUNK_OVERLAP_LINES = 50;
 
 class WorkerAgent {
-  constructor(db, fs, llmClient) {
+  constructor(db, fs, llmClient, targetDirectory = null) {
     this.db = db;
     this.fs = fs;
     this.llmClient = llmClient;
+    this.targetDirectory = targetDirectory; // Directory where files are actually located
   }
 
     async claimTask(workerId) {
@@ -119,11 +120,19 @@ class WorkerAgent {
   }
 
   async _readFileContent(filePath) {
-    const resolvedPath = path.resolve(filePath);
+    // If we have a target directory, resolve relative paths against it
+    // Otherwise, use the original behavior for backward compatibility
+    let resolvedPath;
+    if (this.targetDirectory && !path.isAbsolute(filePath)) {
+      resolvedPath = path.resolve(this.targetDirectory, filePath);
+    } else {
+      resolvedPath = path.resolve(filePath);
+    }
     
     // The original check was too restrictive for temp-directory-based tests.
     // This new check prevents directory traversal while allowing absolute paths.
-    if (path.relative(BASE_DIR, resolvedPath).startsWith('..')) {
+    const baseDir = this.targetDirectory || BASE_DIR;
+    if (path.relative(baseDir, resolvedPath).startsWith('..')) {
         // A second check for good measure to ensure it's not trying to escape the general area.
         if (!resolvedPath.startsWith(os.tmpdir())) {
              throw new Error(`Path traversal attempt detected: ${filePath}`);
