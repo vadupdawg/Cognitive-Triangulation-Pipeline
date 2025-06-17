@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs').promises;
 
 const EXCLUSION_PATTERNS = [
     /node_modules/,
@@ -30,10 +31,28 @@ function calculateHash(stream) {
 
 class RepositoryScanner {
     /**
-     * @param {any} fileSystem - A mock or real file system object.
+     * @param {string} repoPath - The absolute path to the repository.
      */
-    constructor(fileSystem) {
-        this.fileSystem = fileSystem;
+    constructor(repoPath) {
+        this.repoPath = repoPath;
+    }
+
+    /**
+     * Recursively gets all file paths from the repository, returning relative paths.
+     * @param {string} dir - The directory to scan.
+     * @returns {Promise<string[]>} A list of relative file paths.
+     */
+    async getAllFiles(dir = this.repoPath) {
+        const dirents = await fs.readdir(dir, { withFileTypes: true });
+        const files = await Promise.all(dirents.map((dirent) => {
+            const res = path.resolve(dir, dirent.name);
+            if (dirent.isDirectory()) {
+                return this.getAllFiles(res);
+            } else {
+                return path.relative(this.repoPath, res);
+            }
+        }));
+        return Array.prototype.concat(...files).flat();
     }
 
     /**
@@ -42,7 +61,7 @@ class RepositoryScanner {
      */
     async scan() {
         const currentState = new Map();
-        const allFiles = this.fileSystem.getAllFiles();
+        const allFiles = await this.getAllFiles();
         const processingPromises = [];
 
         for (const filePath of allFiles) {
@@ -52,8 +71,8 @@ class RepositoryScanner {
 
             const promise = (async () => {
                 try {
-                    // Assumes the fileSystem object can provide a stream
-                    const stream = this.fileSystem.createReadStream(filePath);
+                    const fullPath = path.join(this.repoPath, filePath);
+                    const stream = require('fs').createReadStream(fullPath);
                     const hash = await calculateHash(stream);
                     currentState.set(filePath, hash);
                 } catch (error) {
@@ -83,40 +102,37 @@ class ChangeAnalyzer {
 
         const previousPaths = new Set(previousState.keys());
         const currentPaths = new Set(currentState.keys());
+        const previousHashes = new Map();
+        previousState.forEach((hash, path) => previousHashes.set(hash, path));
 
-        // Identify modified files
+        // Identify new and modified files
+        for (const [path, hash] of currentState.entries()) {
+            if (!previousPaths.has(path)) {
+                // If the hash exists in the previous state under a different path, it's a rename.
+                if (previousHashes.has(hash)) {
+                    const oldPath = previousHashes.get(hash);
+                    // To be a rename, the old path must no longer exist in the current state.
+                    if (oldPath && !currentPaths.has(oldPath)) {
+                         renamedFiles.push({ oldPath, newPath: path });
+                         // Remove from previousHashes to prevent multiple renames for the same hash
+                         previousHashes.delete(hash);
+                    } else {
+                        newFiles.set(path, hash);
+                    }
+                } else {
+                    newFiles.set(path, hash);
+                }
+            } else if (previousState.get(path) !== hash) {
+                modifiedFiles.set(path, hash);
+            }
+        }
+
+        // Identify deleted files
+        const renamedOldPaths = new Set(renamedFiles.map(r => r.oldPath));
         for (const path of previousPaths) {
-            if (currentPaths.has(path)) {
-                if (previousState.get(path) !== currentState.get(path)) {
-                    modifiedFiles.set(path, currentState.get(path) || '');
-                }
+            if (!currentPaths.has(path) && !renamedOldPaths.has(path)) {
+                deletedFiles.push(path);
             }
-        }
-
-        const addedPaths = new Set([...currentPaths].filter(p => !previousPaths.has(p)));
-        const potentiallyDeletedPaths = new Set([...previousPaths].filter(p => !currentPaths.has(p)));
-
-        const addedFileHashes = new Map();
-        for (const path of addedPaths) {
-            addedFileHashes.set(currentState.get(path) || '', path);
-        }
-
-        for (const oldPath of potentiallyDeletedPaths) {
-            const oldHash = previousState.get(oldPath);
-            if (oldHash && addedFileHashes.has(oldHash)) {
-                const newPath = addedFileHashes.get(oldHash);
-                if (newPath) {
-                    renamedFiles.push({ oldPath, newPath });
-                    addedPaths.delete(newPath);
-                    addedFileHashes.delete(oldHash);
-                }
-            } else {
-                deletedFiles.push(oldPath);
-            }
-        }
-
-        for (const path of addedPaths) {
-            newFiles.set(path, currentState.get(path) || '');
         }
 
         return { newFiles, modifiedFiles, deletedFiles, renamedFiles };
@@ -138,22 +154,24 @@ class QueuePopulator {
     async populate(changes) {
         const filesToProcess = new Map([...changes.newFiles, ...changes.modifiedFiles]);
 
+        // Process work queue items sequentially to avoid database locking issues
         for (const [filePath, contentHash] of filesToProcess) {
-            this.dbConnector.execute(
+            await this.dbConnector.execute(
                 'INSERT INTO work_queue (file_path, content_hash, status) VALUES (?, ?, ?)',
                 [filePath, contentHash, 'pending']
             );
         }
 
+        // Process refactoring tasks sequentially
         for (const filePath of changes.deletedFiles) {
-            this.dbConnector.execute(
+            await this.dbConnector.execute(
                 'INSERT INTO refactoring_tasks (task_type, old_path, new_path) VALUES (?, ?, ?)',
                 ['DELETE', filePath, null]
             );
         }
 
         for (const { oldPath, newPath } of changes.renamedFiles) {
-            this.dbConnector.execute(
+            await this.dbConnector.execute(
                 'INSERT INTO refactoring_tasks (task_type, old_path, new_path) VALUES (?, ?, ?)',
                 ['RENAME', oldPath, newPath]
             );
@@ -174,9 +192,10 @@ class StatePersistor {
      * @param {Map<string, string>} state
      */
     async persist(state) {
-        this.dbConnector.execute('DELETE FROM file_state', []);
+        await this.dbConnector.execute('DELETE FROM file_state', []);
+        // Process state persistence sequentially to avoid database locking issues
         for (const [filePath, contentHash] of state) {
-            this.dbConnector.execute(
+            await this.dbConnector.execute(
                 'INSERT INTO file_state (file_path, content_hash) VALUES (?, ?)',
                 [filePath, contentHash]
             );
@@ -205,7 +224,7 @@ class ScoutAgent {
      */
     async loadPreviousState() {
         const previousState = new Map();
-        const rows = this.dbConnector.execute('SELECT * FROM file_state', []);
+        const rows = await this.dbConnector.execute('SELECT * FROM file_state', []);
         for (const row of rows) {
             previousState.set(row.file_path, row.content_hash);
         }
@@ -216,7 +235,7 @@ class ScoutAgent {
      * Main execution method for the agent.
      */
     async run() {
-        this.dbConnector.beginTransaction();
+        await this.dbConnector.beginTransaction();
         try {
             const previousState = await this.loadPreviousState();
             const currentState = await this.repositoryScanner.scan();
@@ -225,9 +244,9 @@ class ScoutAgent {
             await this.queuePopulator.populate(changes);
             await this.statePersistor.persist(currentState);
 
-            this.dbConnector.commit();
+            await this.dbConnector.commit();
         } catch (error) {
-            this.dbConnector.rollback();
+            await this.dbConnector.rollback();
             throw error;
         }
     }

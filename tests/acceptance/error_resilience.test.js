@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 
-import { describe, it, expect } from 'vitest';
 
 describe('Feature-- Error Resilience and Recovery', () => {
   it('Scenario-- WorkerAgent correctly handles malformed JSON from the LLM', () => {

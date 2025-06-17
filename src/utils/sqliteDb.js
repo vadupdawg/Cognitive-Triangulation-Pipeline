@@ -41,6 +41,50 @@ async function execute(sql, params = []) {
   return db.run(sql, params);
 }
 
+/**
+ * Begins a new transaction.
+ * @returns {Promise<void>}
+ */
+async function beginTransaction() {
+    await execute('BEGIN TRANSACTION');
+}
+
+/**
+ * Commits the current transaction.
+ * @returns {Promise<void>}
+ */
+async function commit() {
+    await execute('COMMIT');
+}
+
+/**
+ * Rolls back the current transaction.
+ * @returns {Promise<void>}
+ */
+async function rollback() {
+    await execute('ROLLBACK');
+}
+
+/**
+ * Executes a SQL query and returns a single row.
+ * @param {string} sql The SQL query to execute.
+ * @param {Array<any>} [params=[]] The parameters for the query.
+ * @returns {Promise<any>} The first row of the result set.
+ */
+async function querySingle(sql, params = []) {
+    if (!db) {
+        db = await open({
+            filename: SQLITE_DB_PATH,
+            driver: sqlite3.Database,
+        });
+    }
+    return db.get(sql, params);
+}
+
 module.exports = {
   execute,
+  beginTransaction,
+  commit,
+  rollback,
+  querySingle,
 };

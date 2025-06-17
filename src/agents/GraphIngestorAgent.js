@@ -151,7 +151,7 @@ function prepareGraphData(analysisBatch) {
         const properties = removeNullValues({
           qualifiedName: entity.qualifiedName,
           name: entity.name,
-          filePath: entity.filePath,
+          filePath: entity.filePath || llm_output.filePath, // Use entity's filePath or fall back to main filePath
           signature: entity.signature,
         });
         nodesByLabel.get(label).push(properties);
@@ -196,10 +196,12 @@ async function createNodes(transaction, nodesByLabel) {
         UNWIND $batch as properties
         MERGE (n:\`${label}\` {qualifiedName: properties.qualifiedName})
         SET n += properties
+        RETURN n
       `;
-      await transaction.run(query, {
+      const result = await transaction.run(query, {
         batch
       });
+      console.log(`Created/updated ${result.records.length} nodes with label '${label}'`);
     }
   }
 }
@@ -217,10 +219,12 @@ async function createRelationships(transaction, relsByType) {
         MATCH (source {qualifiedName: rel.source_qualifiedName})
         MATCH (target {qualifiedName: rel.target_qualifiedName})
         MERGE (source)-[r:\`${type}\`]->(target)
+        RETURN r
       `;
-      await transaction.run(query, {
+      const result = await transaction.run(query, {
         batch
       });
+      console.log(`Created/updated ${result.records.length} relationships of type '${type}'`);
     }
   }
 }
@@ -231,35 +235,37 @@ async function createRelationships(transaction, relsByType) {
  * @param {string} status The new status to set.
  * @param {Array<number>} ids The IDs of the tasks to update.
  */
-async function updateTaskStatus(tableName, status, ids) {
+async function updateTaskStatus(db, tableName, status, ids) {
   if (ids.length === 0) {
     return;
   }
   const placeholders = ids.map(() => '?').join(',');
   const query = `UPDATE ${tableName} SET status = ? WHERE id IN (${placeholders})`;
-  await sqliteDb.execute(query, [status, ...ids]);
+  await db.run(query, [status, ...ids]);
 }
 
 
 /**
  * Updates the status of processed tasks in SQLite after a successful Neo4j commit.
+ * @param {sqlite.Database} db The SQLite database connection.
  * @param {Array<Object>} analysisBatch The batch of analysis results.
  * @param {Array<Object>} refactoringBatch The batch of refactoring tasks.
  */
-async function markTasksAsCompleted(analysisBatch, refactoringBatch) {
+async function markTasksAsCompleted(db, analysisBatch, refactoringBatch) {
   const analysisIds = analysisBatch.map((r) => r.id);
-  await updateTaskStatus('analysis_results', 'ingested', analysisIds);
+  await updateTaskStatus(db, 'analysis_results', 'ingested', analysisIds);
 
   const refactoringIds = refactoringBatch.map((t) => t.id);
-  await updateTaskStatus('refactoring_tasks', 'completed', refactoringIds);
+  await updateTaskStatus(db, 'refactoring_tasks', 'completed', refactoringIds);
 }
 
 /**
  * Processes a batch of analysis and refactoring tasks, ingesting them into the graph.
  * @param {Array<Object>} analysisBatch The batch of analysis results.
  * @param {Array<Object>} refactoringBatch The batch of refactoring tasks.
+ * @param {sqlite.Database} db The database connection to use.
  */
-async function processBatch(analysisBatch, refactoringBatch) {
+async function processBatch(analysisBatch, refactoringBatch, db = sqliteDb) {
   if (!analysisBatch.length && !refactoringBatch.length) {
     return;
   }
@@ -276,12 +282,20 @@ async function processBatch(analysisBatch, refactoringBatch) {
       relsByType
     } = prepareGraphData(analysisBatch);
 
+    console.log('Processing refactoring tasks...');
     await handleRefactoring(transaction, refactoringBatch);
+    
+    console.log('Creating nodes...');
     await createNodes(transaction, nodesByLabel);
+    
+    console.log('Creating relationships...');
     await createRelationships(transaction, relsByType);
 
+    console.log('Committing transaction...');
     await transaction.commit();
-    await markTasksAsCompleted(analysisBatch, refactoringBatch);
+    console.log('Transaction committed successfully');
+    
+    await markTasksAsCompleted(db, analysisBatch, refactoringBatch);
   } catch (error) {
     console.error('Graph ingestion failed, rolling back transaction:', error);
     await transaction.rollback();

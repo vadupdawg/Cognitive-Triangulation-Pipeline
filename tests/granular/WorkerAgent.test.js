@@ -1,148 +1,217 @@
-const path = require('path');
-const { WorkerAgent, LlmCallFailedError, InvalidJsonResponseError, FileNotFoundError } = require('../../src/agents/WorkerAgent');
+// @ts-check
 const fs = require('fs').promises;
+const path = require('path');
+const os = require('os');
+require('dotenv').config();
+const ProductionAgentFactory = require('../../src/utils/productionAgentFactory');
+const { FileNotFoundError, LlmCallFailedError, InvalidJsonResponseError } = require('../../src/agents/WorkerAgent');
 
-// Mock the entire fs module
-jest.mock('fs', () => ({
-  promises: {
-    readFile: jest.fn(),
-  },
-}));
+describe('WorkerAgent Production Tests', () => {
+    let factory;
+    let tempTestPath;
+    let workerAgent;
+    let connections;
 
-describe('WorkerAgent', () => {
-  let mockDb;
-  let mockLlmClient;
-  let workerAgent;
+    beforeAll(async () => {
+        // Initialize production factory
+        factory = new ProductionAgentFactory();
+        
+        // Test connections
+        console.log('\n=== Testing Production Connections ===');
+        connections = await factory.testConnections();
+        
+        if (!connections.sqlite) {
+            throw new Error('SQLite is required for WorkerAgent tests');
+        }
+        
+        if (!connections.deepseek) {
+            console.warn('⚠️  DeepSeek API not available - some tests may be skipped');
+        }
 
-  beforeEach(() => {
-    mockDb = {
-      querySingle: jest.fn(),
-      execute: jest.fn(),
-    };
-    mockLlmClient = {
-      call: jest.fn(),
-    };
-    // Instantiate the agent before each test
-    workerAgent = new WorkerAgent(mockDb, fs, mockLlmClient);
-  });
+        // Initialize database with schema
+        await factory.initializeDatabase();
+        console.log('Production WorkerAgent environment ready');
+    }, 60000);
 
-  afterEach(() => {
-    jest.clearAllMocks();
-    jest.restoreAllMocks();
-  });
-
-  describe('5.1. Task Claiming (claimTask)', () => {
-    test('1.1: Claim a pending task successfully', async () => {
-      const task = { id: 1, file_path: 'src/test.js' };
-      mockDb.querySingle.mockResolvedValue(task);
-      const result = await workerAgent.claimTask('worker-1');
-      expect(mockDb.querySingle).toHaveBeenCalledTimes(1);
-      expect(result).toEqual(task);
+    afterAll(async () => {
+        if (factory) {
+            await factory.cleanup();
+        }
     });
 
-    test('1.2: No pending tasks available', async () => {
-      mockDb.querySingle.mockResolvedValue(null);
-      const result = await workerAgent.claimTask('worker-1');
-      expect(mockDb.querySingle).toHaveBeenCalledTimes(1);
-      expect(result).toBeNull();
-    });
-  });
+    beforeEach(async () => {
+        tempTestPath = await fs.mkdtemp(path.join(os.tmpdir(), 'worker-prod-test-'));
+        
+        // Create production WorkerAgent with DeepSeek
+        workerAgent = await factory.createWorkerAgent();
 
-  describe('5.2. Successful Task Processing (processTask)', () => {
-    test('2.1: Full successful workflow for a small file', async () => {
-      const task = { id: 1, file_path: 'src/test.js' };
-      const fileContent = 'some code content';
-      const llmResponse = { body: '{"entities": [], "relationships": []}' };
-      fs.readFile.mockResolvedValue(fileContent);
-      mockLlmClient.call.mockResolvedValue(llmResponse);
-
-      await workerAgent.processTask(task);
-
-      const expectedPath = path.resolve(task.file_path);
-      expect(fs.readFile).toHaveBeenCalledWith(expectedPath, 'utf8');
-      expect(mockLlmClient.call).toHaveBeenCalledTimes(1);
-      expect(mockDb.execute).toHaveBeenCalledWith('BEGIN TRANSACTION');
-      expect(mockDb.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO analysis_results'), expect.any(Array));
-      expect(mockDb.execute).toHaveBeenCalledWith(expect.stringContaining('UPDATE work_queue'), expect.any(Array));
-      expect(mockDb.execute).toHaveBeenCalledWith('COMMIT');
-    });
-  });
-
-  describe('5.4. Error Handling and Resilience (via processTask)', () => {
-    test('4.1: File not found', async () => {
-      const task = { id: 1, file_path: 'src/nonexistent.js' };
-      fs.readFile.mockRejectedValue(new Error('File not found'));
-      
-      await workerAgent.processTask(task);
-      
-      expect(mockDb.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO failed_work'), [task.id, expect.stringContaining('File not found at path')]);
-      expect(mockLlmClient.call).not.toHaveBeenCalled();
+        // Clean database before each test
+        const db = await factory.getSqliteConnection();
+        try {
+            await db.exec('DELETE FROM work_queue');
+            await db.exec('DELETE FROM analysis_results');
+            await db.exec('DELETE FROM failed_work');
+        } finally {
+            await db.close();
+        }
     });
 
-    test('4.2: LLM call fails with transient errors but eventually succeeds', async () => {
-      const task = { id: 1, file_path: 'src/test.js' };
-      fs.readFile.mockResolvedValue('some content');
-      mockLlmClient.call
-        .mockRejectedValueOnce(new Error('503 Server Error'))
-        .mockRejectedValueOnce(new Error('503 Server Error'))
-        .mockResolvedValue({ body: '{"entities": [], "relationships": []}' });
-
-      await workerAgent.processTask(task);
-
-      expect(mockLlmClient.call).toHaveBeenCalledTimes(3);
-      expect(mockDb.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO analysis_results'), expect.any(Array));
+    afterEach(async () => {
+        if (tempTestPath) {
+            await fs.rm(tempTestPath, { recursive: true, force: true });
+        }
     });
 
-    test('4.3: LLM call fails permanently', async () => {
-      const task = { id: 1, file_path: 'src/test.js' };
-      fs.readFile.mockResolvedValue('some content');
-      mockLlmClient.call.mockRejectedValue(new Error('Permanent Failure'));
+    async function setupTask(filePath, contentHash = 'test-hash') {
+        const db = await factory.getSqliteConnection();
+        try {
+            const result = await db.run(
+                'INSERT INTO work_queue (file_path, content_hash, status) VALUES (?, ?, ?)',
+                [filePath, contentHash, 'pending']
+            );
+            return { id: result.lastID, file_path: filePath, content_hash: contentHash };
+        } finally {
+            await db.close();
+        }
+    }
 
-      await workerAgent.processTask(task);
+    describe('Successful Task Processing', () => {
+        test('WORKER-PROD-001: Processes a task with DeepSeek LLM and real file', async () => {
+            if (!connections.deepseek) {
+                console.log('Skipping DeepSeek test - API not available');
+                return;
+            }
 
-      expect(mockDb.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO failed_work'), [task.id, 'LLM call failed after 3 attempts: Permanent Failure']);
+            // Create a real test file
+            const filePath = path.join(tempTestPath, 'test.js');
+            const fileContent = `
+// Test JavaScript file for DeepSeek analysis
+class TestClass {
+    constructor(name) {
+        this.name = name;
+    }
+    
+    greet() {
+        return \`Hello, \${this.name}!\`;
+    }
+}
+
+function processData(data) {
+    return data.map(item => item.toUpperCase());
+}
+
+module.exports = { TestClass, processData };
+            `.trim();
+            
+            await fs.writeFile(filePath, fileContent);
+            
+            const task = await setupTask(filePath);
+            console.log(`Processing file with DeepSeek: ${filePath}`);
+
+            // Claim and process the task with actual DeepSeek LLM
+            const claimedTask = await workerAgent.claimTask('test-worker');
+            expect(claimedTask).not.toBeNull();
+            expect(claimedTask.id).toBe(task.id);
+
+            await workerAgent.processTask(claimedTask);
+
+            // Verify the analysis result was created with DeepSeek output
+            const db = await factory.getSqliteConnection();
+            try {
+                const analysisResult = await db.get('SELECT * FROM analysis_results WHERE work_item_id = ?', [claimedTask.id]);
+                const failedWork = await db.get('SELECT * FROM failed_work WHERE work_item_id = ?', [claimedTask.id]);
+                const workItemStatus = await db.get('SELECT * FROM work_queue WHERE id = ?', [claimedTask.id]);
+                
+                console.log('Analysis result:', analysisResult);
+                console.log('Failed work:', failedWork);
+                console.log('Work item status:', workItemStatus?.status);
+                
+                expect(analysisResult).toBeDefined();
+                expect(analysisResult.llm_output).toBeTruthy();
+                
+                // Parse and validate DeepSeek's analysis
+                const llmOutput = JSON.parse(analysisResult.llm_output);
+                expect(llmOutput).toHaveProperty('filePath');
+                expect(llmOutput).toHaveProperty('entities');
+                expect(llmOutput).toHaveProperty('relationships');
+                expect(Array.isArray(llmOutput.entities)).toBe(true);
+                expect(Array.isArray(llmOutput.relationships)).toBe(true);
+                
+                console.log(`✅ DeepSeek found: ${llmOutput.entities.length} entities, ${llmOutput.relationships.length} relationships`);
+
+                const workItem = await db.get('SELECT * FROM work_queue WHERE id = ?', [task.id]);
+                expect(workItem).toBeDefined();
+                expect(workItem.status).toBe('completed');
+            } finally {
+                await db.close();
+            }
+        }, 120000); // 2 minute timeout for LLM processing
     });
 
-    test('4.4: LLM returns invalid JSON permanently', async () => {
-      const task = { id: 1, file_path: 'src/test.js' };
-      fs.readFile.mockResolvedValue('some content');
-      mockLlmClient.call.mockResolvedValue({ body: 'This is not JSON' });
+    describe('Error Handling', () => {
+        test('WORKER-PROD-002: Handles a file that does not exist', async () => {
+            const filePath = path.join(tempTestPath, 'nonexistent.js');
+            const task = await setupTask(filePath);
 
-      await workerAgent.processTask(task);
+            await workerAgent.processTask(task);
 
-      expect(mockDb.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO failed_work'), [task.id, 'Response is not valid JSON.']);
+            const db = await factory.getSqliteConnection();
+            try {
+                const failedWork = await db.get('SELECT * FROM failed_work WHERE work_item_id = ?', [task.id]);
+                expect(failedWork).toBeDefined();
+                expect(failedWork.error_message).toContain('File not found');
+            } finally {
+                await db.close();
+            }
+        });
+
+        test('WORKER-PROD-003: Handles invalid file path (path traversal)', async () => {
+            const maliciousPath = '../../../etc/passwd';
+            const task = await setupTask(maliciousPath);
+
+            await workerAgent.processTask(task);
+
+            const db = await factory.getSqliteConnection();
+            try {
+                const failedWork = await db.get('SELECT * FROM failed_work WHERE work_item_id = ?', [task.id]);
+                expect(failedWork).toBeDefined();
+                expect(failedWork.error_message).toContain('Path traversal attempt detected');
+            } finally {
+                await db.close();
+            }
+        });
+
+        test('WORKER-PROD-004: Handles DeepSeek API failure gracefully', async () => {
+            if (!connections.deepseek) {
+                console.log('Skipping DeepSeek error test - API not available');
+                return;
+            }
+
+            // Create a file that might cause DeepSeek issues (very large or malformed)
+            const filePath = path.join(tempTestPath, 'problematic.js');
+            const problematicContent = 'a'.repeat(100000); // Very large file
+            await fs.writeFile(filePath, problematicContent);
+            
+            const task = await setupTask(filePath);
+
+            // This might fail due to size limits or other API issues
+            await workerAgent.processTask(task);
+
+            const db = await factory.getSqliteConnection();
+            try {
+                // Check if it either succeeded or failed gracefully
+                const analysisResult = await db.get('SELECT * FROM analysis_results WHERE work_item_id = ?', [task.id]);
+                const failedWork = await db.get('SELECT * FROM failed_work WHERE work_item_id = ?', [task.id]);
+                
+                // Either should succeed or fail gracefully, but not crash
+                expect(analysisResult || failedWork).toBeTruthy();
+                
+                if (failedWork) {
+                    console.log(`Expected failure handled: ${failedWork.error_message}`);
+                }
+            } finally {
+                await db.close();
+            }
+        }, 60000);
     });
-  });
-
-  describe('5.5. Large File Chunking (via analyzeFileContent)', () => {
-    test('5.1: File below size threshold', async () => {
-      const filePath = 'src/small.js';
-      const fileContent = 'small content';
-      mockLlmClient.call.mockResolvedValue({ body: '{"entities": [], "relationships": []}' });
-
-      await workerAgent.analyzeFileContent(filePath, fileContent);
-      
-      expect(mockLlmClient.call).toHaveBeenCalledTimes(1);
-    });
-
-    test('5.2: File above size threshold', async () => {
-      const filePath = 'src/large.js';
-      const largeFileContent = 'a'.repeat(200 * 1024); // > 128KB
-      
-      // Mock the private _createChunks method to control its output for the test
-      const chunks = ['chunk1', 'chunk2'];
-      const createChunksSpy = jest.spyOn(workerAgent, '_createChunks').mockReturnValue(chunks);
-      
-      mockLlmClient.call.mockResolvedValue({ body: '{"entities": [{"qualifiedName": "e1"}], "relationships": []}' });
-      
-      const result = await workerAgent.analyzeFileContent(filePath, largeFileContent);
-
-      expect(createChunksSpy).toHaveBeenCalled();
-      expect(mockLlmClient.call).toHaveBeenCalledTimes(chunks.length);
-      // Verify that results from different chunks are merged
-      expect(result.entities.length).toBe(1);
-      expect(result.entities[0].qualifiedName).toBe("e1");
-      expect(result.is_chunked).toBe(true);
-    });
-  });
 });

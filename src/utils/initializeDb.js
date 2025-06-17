@@ -34,8 +34,8 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS analysis_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     work_item_id INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
     llm_output TEXT NOT NULL,
-    llm_output_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending_ingestion', -- pending_ingestion, ingested
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (work_item_id) REFERENCES work_queue (id)

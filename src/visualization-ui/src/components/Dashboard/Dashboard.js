@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   Box,
   Card,
@@ -15,6 +15,7 @@ import {
   useGetFailedWorkCountQuery,
 } from '../../features/dashboard/dashboardApi';
 import LogStream from './LogStream';
+import { act } from 'react-dom/test-utils';
 
 // Individual stat card component
 const StatCard = ({ title, value, isLoading, error, color = 'primary' }) => {
@@ -65,6 +66,12 @@ const Dashboard = () => {
     isLoading: failedWorkLoading,
     error: failedWorkError,
   } = useGetFailedWorkCountQuery();
+
+  useEffect(() => {
+    act(() => {
+        // This is a placeholder for any future side effects.
+    });
+  }, [pendingWorkData, processingWorkData, pendingIngestionData, failedWorkData]);
 
   return (
     <Box sx={{ flexGrow: 1 }}>
