@@ -37,18 +37,25 @@ describe('ScoutAgent Production Tests', () => {
     beforeEach(async () => {
         tempRepoPath = await fs.mkdtemp(path.join(os.tmpdir(), 'scout-prod-test-'));
         
-        // Create production ScoutAgent
-        scoutAgent = await factory.createScoutAgent(tempRepoPath);
-
-        // Clean database before each test
+        // Clean database before each test (more thorough cleanup)
         const db = await factory.getSqliteConnection();
         try {
+            await db.exec('BEGIN TRANSACTION');
             await db.exec('DELETE FROM work_queue');
             await db.exec('DELETE FROM refactoring_tasks');
             await db.exec('DELETE FROM file_state');
+            await db.exec('DELETE FROM analysis_results');
+            await db.exec('DELETE FROM failed_work');
+            await db.exec('COMMIT');
+        } catch (error) {
+            await db.exec('ROLLBACK');
+            throw error;
         } finally {
             await db.close();
         }
+        
+        // Create production ScoutAgent after cleanup
+        scoutAgent = await factory.createScoutAgent(tempRepoPath);
     });
 
     afterEach(async () => {

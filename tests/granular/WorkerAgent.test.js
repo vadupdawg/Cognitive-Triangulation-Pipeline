@@ -139,7 +139,7 @@ module.exports = { TestClass, processData };
                 
                 console.log(`✅ DeepSeek found: ${llmOutput.entities.length} entities, ${llmOutput.relationships.length} relationships`);
 
-                const workItem = await db.get('SELECT * FROM work_queue WHERE id = ?', [task.id]);
+                const workItem = await db.get('SELECT * FROM work_queue WHERE id = ?', [claimedTask.id]);
                 expect(workItem).toBeDefined();
                 expect(workItem.status).toBe('completed');
             } finally {

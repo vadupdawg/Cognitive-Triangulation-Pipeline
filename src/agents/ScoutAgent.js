@@ -5,14 +5,80 @@ const path = require('path');
 const fs = require('fs').promises;
 
 const EXCLUSION_PATTERNS = [
+    // Standard .gitignore patterns
     /node_modules/,
     /\.git/,
     /dist/,
+    /build/,
+    /coverage/,
+    /\.next/,
+    /\.nuxt/,
+    /\.cache/,
+    /\.temp/,
+    /\.tmp/,
+    /logs/,
+    /\.log$/,
+    /\.env$/,
+    /\.env\./,
+    
+    // Binary and compiled files
     /\.o$/,
     /\.pyc$/,
+    /\.class$/,
+    /\.jar$/,
+    /\.war$/,
+    /\.exe$/,
+    /\.dll$/,
+    /\.so$/,
+    /\.dylib$/,
+    
+    // IDE and editor files
+    /\.vscode/,
+    /\.idea/,
+    /\.vs/,
+    /\.DS_Store$/,
+    /Thumbs\.db$/,
+    
+    // Package manager files
+    /package-lock\.json$/,
+    /yarn\.lock$/,
+    /composer\.lock$/,
+    /Pipfile\.lock$/,
+    
+    // Documentation and README files
+    /README\.md$/i,
+    /CHANGELOG\.md$/i,
+    /LICENSE$/i,
+    /\.md$/i,
+    
+    // Test files and directories (comprehensive test exclusion)
+    // Any file with "test" in the name
     /test/i,
     /spec/i,
-    /README\.md/i,
+    /\.test\./i,
+    /\.spec\./i,
+    /test_/i,
+    /_test/i,
+    /tests\//i,
+    /test\//i,
+    /spec\//i,
+    /specs\//i,
+    /__tests__\//i,
+    /\.tests\//i,
+    /\.test\//i,
+    /\.spec\//i,
+    /\.specs\//i,
+    
+    // Exclude any path that contains test-related folder names
+    /\/test\//i,
+    /\/tests\//i,
+    /\/spec\//i,
+    /\/specs\//i,
+    /\/__tests__\//i,
+    /\/\.test\//i,
+    /\/\.tests\//i,
+    /\/\.spec\//i,
+    /\/\.specs\//i,
 ];
 
 /**
@@ -39,20 +105,33 @@ class RepositoryScanner {
 
     /**
      * Recursively gets all file paths from the repository, returning relative paths.
+     * Excludes directories that match exclusion patterns early for efficiency.
      * @param {string} dir - The directory to scan.
      * @returns {Promise<string[]>} A list of relative file paths.
      */
     async getAllFiles(dir = this.repoPath) {
         const dirents = await fs.readdir(dir, { withFileTypes: true });
-        const files = await Promise.all(dirents.map((dirent) => {
+        const files = await Promise.all(dirents.map(async (dirent) => {
             const res = path.resolve(dir, dirent.name);
+            const relativePath = path.relative(this.repoPath, res);
+            
+            // Check if this directory/file should be excluded
+            if (EXCLUSION_PATTERNS.some(pattern => pattern.test(relativePath))) {
+                return []; // Skip this entire directory/file
+            }
+            
             if (dirent.isDirectory()) {
+                // Additional check for test directories by name
+                const dirName = dirent.name.toLowerCase();
+                if (dirName.includes('test') || dirName.includes('spec') || dirName === '__tests__') {
+                    return []; // Skip entire test directories
+                }
                 return this.getAllFiles(res);
             } else {
-                return path.relative(this.repoPath, res);
+                return relativePath;
             }
         }));
-        return Array.prototype.concat(...files).flat();
+        return Array.prototype.concat(...files).flat().filter(f => f !== '');
     }
 
     /**
