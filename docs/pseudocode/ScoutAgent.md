@@ -2,7 +2,6 @@
 
 ## 1. Constants and Configuration
 
--   `SCOUT_STATE_FILE`: String -- Path to the JSON file for storing file state.
 -   `SQLITE_DB_PATH`: String -- Path to the central SQLite database.
 -   `EXCLUSION_PATTERNS`: List of Strings -- Patterns for files/directories to ignore (e.g., `node_modules`, `*.pyc`, `.git`).
 
@@ -12,22 +11,6 @@
 FUNCTION main(repositoryPath)
     -- TEST happy path-- Ensure the agent completes a full run without errors.
     
-    -- Load the state from the last successful run.
-    -- TEST error handling-- Run with a non-existent or corrupt state file.
-    previousState = loadPreviousState(SCOUT_STATE_FILE)
-
-    -- Scan the repository to get a snapshot of the current file state.
-    -- TEST repository scanning-- Ensure it correctly finds files and ignores excluded ones.
-    currentState = scanRepository(repositoryPath, EXCLUSION_PATTERNS)
-
-    -- Compare the new state with the old state to identify all changes.
-    changes = analyzeChanges(currentState, previousState)
-
-    -- Log the summary of detected changes.
-    LOG "Discovered " + changes.newAndModifiedFiles.length + " new/modified files."
-    LOG "Discovered " + changes.deletedFiles.length + " deleted files."
-    LOG "Discovered " + changes.renamedFiles.length + " renamed files."
-
     -- Connect to the database with retry logic.
     -- TEST database connection-- Test connection failure and retry mechanism.
     dbConnection = connectToDatabaseWithRetry(SQLITE_DB_PATH, maxRetries=3, backoffFactor=2)
@@ -37,51 +20,74 @@ FUNCTION main(repositoryPath)
         EXIT with failure code
     END IF
 
-    -- Populate the database queues with the detected changes.
-    -- TEST queue population-- Verify correct tasks are created for each change type.
-    success = populateQueues(dbConnection, changes)
+    -- The entire process is a single atomic transaction to ensure data consistency.
+    BEGIN_TRANSACTION(dbConnection)
+    TRY
+        -- Load the state from the last successful run from the database.
+        -- TEST database state loading-- Run with an empty file_state table (first run).
+        previousState = loadPreviousStateFromDB(dbConnection)
 
-    -- If the queues were populated successfully, save the new state for the next run.
-    IF success THEN
-        saveCurrentState(SCOUT_STATE_FILE, currentState)
-        LOG "Scout run completed successfully. New state saved."
-    ELSE
-        LOG_ERROR "Failed to populate queues. State will not be updated to ensure data consistency."
+        -- Scan the repository to get a snapshot of the current file state.
+        -- TEST repository scanning-- Ensure it correctly finds files and ignores excluded ones.
+        currentState = scanRepository(repositoryPath, EXCLUSION_PATTERNS)
+
+        -- Compare the new state with the old state to identify all changes.
+        changes = analyzeChanges(currentState, previousState)
+
+        -- Log the summary of detected changes.
+        LOG "Discovered " + changes.newFiles.length + " new files."
+        LOG "Discovered " + changes.modifiedFiles.length + " modified files."
+        LOG "Discovered " + changes.deletedFiles.length + " deleted files."
+        LOG "Discovered " + changes.renamedFiles.length + " renamed files."
+
+        -- Populate the database queues with the detected changes.
+        -- TEST queue population-- Verify correct tasks are created for each change type.
+        populateQueues(dbConnection, changes)
+        
+        -- Update the file state in the database for the next run.
+        -- TEST state update-- Verify file_state table reflects the new currentState.
+        updateFileStateInDB(dbConnection, currentState)
+
+        -- If all steps succeeded, commit the transaction.
+        COMMIT_TRANSACTION(dbConnection)
+        LOG "Scout run completed successfully. State and queues updated."
+
+    CATCH OperationException as e
+        -- If any step failed, roll back the entire transaction.
+        LOG_ERROR "An error occurred during scout execution-- " + e.message
+        LOG_ERROR "Rolling back all database changes."
+        ROLLBACK_TRANSACTION(dbConnection)
         EXIT with failure code
-    END IF
-
-    CLOSE dbConnection
+    FINALLY
+        CLOSE dbConnection
+    END TRY
 END FUNCTION
 ```
 
 ## 3. Core Functions
 
-### 3.1. `loadPreviousState`
+### 3.1. `loadPreviousStateFromDB`
 
 ```pseudocode
-FUNCTION loadPreviousState(stateFilePath)
-    -- INPUT-- stateFilePath (String)
+FUNCTION loadPreviousStateFromDB(dbConnection)
+    -- INPUT-- dbConnection (Object)
     -- OUTPUT-- A map of { filePath -> contentHash } or an empty map.
+    -- TEST database read-- Ensure it correctly reads from the file_state table.
 
-    -- TEST file not found-- The function should return an empty map and log a warning.
-    -- TEST invalid JSON-- The function should return an empty map and log a warning.
-    
+    previousState = new Map()
     TRY
-        IF file at stateFilePath does not exist THEN
-            LOG_WARNING "State file not found. Assuming first run."
-            RETURN new Map()
-        END IF
-
-        fileContent = READ_FILE(stateFilePath)
-        previousState = PARSE_JSON(fileContent)
-        RETURN previousState
-    CATCH JSONParseException
-        LOG_WARNING "Could not parse state file. Starting fresh."
-        RETURN new Map()
-    CATCH FileReadException
-        LOG_ERROR "Could not read state file."
-        RETURN new Map()
+        -- The file_state table holds the last known state.
+        -- It's okay if this table is empty on the first run.
+        results = QUERY(dbConnection, "SELECT file_path, content_hash FROM file_state")
+        FOR EACH row IN results
+            previousState.set(row.file_path, row.content_hash)
+        END FOR
+    CATCH DatabaseException as e
+        LOG_ERROR "Failed to load previous state from database-- " + e.message
+        -- Propagate the exception to trigger a transaction rollback.
+        THROW new OperationException("Database read failure")
     END TRY
+    RETURN previousState
 END FUNCTION
 ```
 
@@ -122,56 +128,68 @@ END FUNCTION
 ```pseudocode
 FUNCTION analyzeChanges(currentState, previousState)
     -- INPUT-- currentState (Map), previousState (Map)
-    -- OUTPUT-- An object containing lists of new/modified, deleted, and renamed files.
+    -- OUTPUT-- An object containing lists of new, modified, deleted, and renamed files.
     
-    -- TDD Anchor-- Test with empty previousState (initial run).
+    -- TDD Anchor-- Test with empty previousState (initial run). All files should be 'new'.
     -- TDD Anchor-- Test with a modified file (hash change).
     -- TDD Anchor-- Test with a new file.
     -- TDD Anchor-- Test with a deleted file.
-    -- TDD Anchor-- Test with a renamed file (hash match between deleted and new).
-    -- TDD Anchor-- Test with a file that was deleted and a new one with the same hash added (rename).
-    -- TDD Anchor-- Test with no changes.
+    -- TDD Anchor-- Test with a renamed file (path changes, hash is identical).
+    -- TDD Anchor-- Test a rename where a new file is created with the same hash as the deleted file. The logic must deterministically identify the rename.
+    -- TDD Anchor-- Test with no changes. All lists should be empty.
 
-    newAndModifiedFiles = new List()
-    deletedFilePaths = new List()
+    newFiles = new List()
+    modifiedFiles = new List()
+    deletedFiles = new List()
     renamedFiles = new List()
 
-    -- Invert the currentState map for efficient hash lookups
-    currentHashes = new Map() -- { hash -> filePath }
-    FOR EACH filePath, hash IN currentState
-        currentHashes.set(hash, filePath)
-    END FOR
+    currentPaths = new Set(currentState.keys())
+    previousPaths = new Set(previousState.keys())
 
-    -- Step 1 & 2-- Identify new/modified files and potential renames
-    FOR EACH filePath, currentHash IN currentState
-        previousHash = previousState.get(filePath)
-        IF previousHash IS NULL OR previousHash IS NOT EQUAL to currentHash THEN
-            -- This file is either new or modified.
-            newAndModifiedFiles.add({ path-- filePath, hash-- currentHash })
+    persistedPaths = currentPaths.intersection(previousPaths)
+    addedPaths = currentPaths.difference(previousPaths)
+    potentiallyDeletedPaths = previousPaths.difference(currentPaths)
+
+    -- Step 1-- Identify modified files.
+    FOR EACH path IN persistedPaths
+        IF currentState.get(path) IS NOT EQUAL to previousState.get(path) THEN
+            modifiedFiles.add({ path-- path, hash-- currentState.get(path) })
         END IF
     END FOR
 
-    -- Step 3-- Identify deleted files
-    FOR EACH filePath, previousHash IN previousState
-        IF currentState.has(filePath) IS FALSE THEN
-            -- This file seems to be deleted. Check if it was a rename.
-            newFilePath = currentHashes.get(previousHash)
-            IF newFilePath IS NOT NULL THEN
-                -- Found a file with the same hash in the current state. It's a rename.
-                renamedFiles.add({ old_path-- filePath, new_path-- newFilePath })
-                
-                -- Remove the renamed file from the newAndModifiedFiles list to avoid processing it twice.
-                REMOVE item from newAndModifiedFiles WHERE item.path == newFilePath
-            ELSE
-                -- It's a genuine deletion.
-                deletedFilePaths.add(filePath)
-            END IF
+    -- Step 2-- Differentiate renames from true additions/deletions.
+    -- Create a lookup map of hashes for all newly added files.
+    addedFileHashes = new Map() -- { hash -> path }
+    FOR EACH path IN addedPaths
+        addedFileHashes.set(currentState.get(path), path)
+    END FOR
+
+    FOR EACH path IN potentiallyDeletedPaths
+        hash = previousState.get(path)
+        IF addedFileHashes.has(hash) THEN
+            -- A file with this hash exists at a new path. It's a rename.
+            newPath = addedFileHashes.get(hash)
+            renamedFiles.add({ old_path-- path, new_path-- newPath })
+            
+            -- Remove this file from the set of added paths so it's not also marked as new.
+            addedPaths.delete(newPath)
+            -- Remove the hash from the lookup to handle cases where multiple new files have the same hash.
+            addedFileHashes.delete(hash)
+        ELSE
+            -- No matching hash found in new files. It's a genuine deletion.
+            deletedFiles.add(path)
         END IF
     END FOR
 
+    -- Step 3-- Any remaining files in addedPaths are genuinely new.
+    FOR EACH path IN addedPaths
+        newFiles.add({ path-- path, hash-- currentState.get(path) })
+    END FOR
+    
     RETURN {
-        newAndModifiedFiles-- newAndModifiedFiles,
-        deletedFiles-- deletedFilePaths,
+        newFiles-- newFiles,
+        modifiedFiles-- modifiedFiles,
+        deletedFiles-- deletedFiles,
         renamedFiles-- renamedFiles
     }
 END FUNCTION
@@ -182,56 +200,65 @@ END FUNCTION
 ```pseudocode
 FUNCTION populateQueues(dbConnection, changes)
     -- INPUT-- dbConnection (Object), changes (Object)
-    -- OUTPUT-- Boolean indicating success or failure.
-
-    -- TDD Anchor-- Test that a new/modified file creates a 'pending' task in work_queue.
+    -- OUTPUT-- None. Modifies the database. Throws exception on failure.
+    -- TDD Anchor-- Test that a new file creates a 'pending' task in work_queue.
+    -- TDD Anchor-- Test that a modified file creates a 'pending' task in work_queue.
     -- TDD Anchor-- Test that a deleted file creates a 'DELETE' task in refactoring_tasks.
     -- TDD Anchor-- Test that a renamed file creates a 'RENAME' task in refactoring_tasks.
-    -- TDD Anchor-- Test database transactionality (all or nothing).
 
     TRY
-        BEGIN_TRANSACTION(dbConnection)
+        -- Combine new and modified files for processing.
+        allFilesToProcess = changes.newFiles.concat(changes.modifiedFiles)
 
         -- Add new and modified files to the work queue
-        FOR EACH file IN changes.newAndModifiedFiles
-            INSERT INTO work_queue (file_path, status) VALUES (file.path, 'pending')
+        FOR EACH file IN allFilesToProcess
+            -- Use INSERT OR IGNORE to prevent duplicate pending tasks.
+            EXECUTE_SQL(dbConnection, "INSERT OR IGNORE INTO work_queue (file_path, status) VALUES (?, 'pending')", [file.path])
         END FOR
 
         -- Add deleted files to the refactoring tasks queue
         FOR EACH filePath IN changes.deletedFiles
-            INSERT INTO refactoring_tasks (task_type, old_path) VALUES ('DELETE', filePath)
+            EXECUTE_SQL(dbConnection, "INSERT INTO refactoring_tasks (task_type, old_path) VALUES ('DELETE', ?)", [filePath])
         END FOR
 
         -- Add renamed files to the refactoring tasks queue
         FOR EACH file IN changes.renamedFiles
-            INSERT INTO refactoring_tasks (task_type, old_path, new_path) VALUES ('RENAME', file.old_path, file.new_path)
+            EXECUTE_SQL(dbConnection, "INSERT INTO refactoring_tasks (task_type, old_path, new_path) VALUES ('RENAME', ?, ?)", [file.old_path, file.new_path])
         END FOR
-
-        COMMIT_TRANSACTION(dbConnection)
-        RETURN TRUE
     CATCH DatabaseException as e
         LOG_ERROR "Database error during queue population-- " + e.message
-        ROLLBACK_TRANSACTION(dbConnection)
-        RETURN FALSE
+        THROW new OperationException("Queue population failure")
     END TRY
 END FUNCTION
 ```
 
-### 3.5. `saveCurrentState`
+### 3.5. `updateFileStateInDB`
 
 ```pseudocode
-FUNCTION saveCurrentState(stateFilePath, currentState)
-    -- INPUT-- stateFilePath (String), currentState (Map)
-    -- OUTPUT-- None. Side effect is writing to a file.
-
-    -- TEST successful write-- Verify file content matches the currentState map.
-    -- TEST file write error-- Handle permissions errors gracefully.
-
+FUNCTION updateFileStateInDB(dbConnection, currentState)
+    -- INPUT-- dbConnection (Object), currentState (Map)
+    -- OUTPUT-- None. Modifies the database. Throws exception on failure.
+    -- TEST state update-- Verify table is cleared and rewritten correctly.
+    
     TRY
-        jsonString = SERIALIZE_TO_JSON(currentState)
-        WRITE_FILE(stateFilePath, jsonString)
-    CATCH FileWriteException as e
-        LOG_ERROR "Failed to save current state to " + stateFilePath + "-- " + e.message
+        -- Clear the old state completely.
+        EXECUTE_SQL(dbConnection, "DELETE FROM file_state")
+
+        -- Insert the new state.
+        -- This should be done as a single batch insert for performance.
+        sql = "INSERT INTO file_state (file_path, content_hash) VALUES (?, ?)"
+        batchData = new List()
+        FOR EACH filePath, hash IN currentState
+            batchData.add([filePath, hash])
+        END FOR
+        
+        IF batchData is not empty THEN
+            EXECUTE_BATCH_SQL(dbConnection, sql, batchData)
+        END IF
+
+    CATCH DatabaseException as e
+        LOG_ERROR "Failed to update file state in database-- " + e.message
+        THROW new OperationException("State update failure")
     END TRY
 END FUNCTION
 ```

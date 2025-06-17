@@ -8,6 +8,9 @@
 -   `LLM_RETRY_COUNT`-- Integer -- (Default-- 3) Max retries for LLM calls.
 -   `LLM_BACKOFF_FACTOR`-- Integer -- (Default-- 2) Factor for exponential backoff on retries.
 -   `POLLING_INTERVAL`-- Integer -- (Default-- 5 seconds) Time to wait when the queue is empty.
+-   `FILE_SIZE_THRESHOLD_KB`-- Integer -- (Default-- 128) Files larger than this will be chunked.
+-   `CHUNK_SIZE_KB`-- Integer -- (Default-- 120) The size of each chunk sent to the LLM.
+-   `CHUNK_OVERLAP_LINES`-- Integer -- (Default-- 50) Number of lines to overlap between chunks to maintain context.
 
 ## 2. Main Entry Point
 
@@ -59,23 +62,20 @@ FUNCTION processTask(db, task)
     -- OUTPUT-- None
     
     TRY
-        -- TEST-- processTask correctly calls readFileContent with the task's file path.
+        -- TEST-- processTask correctly calls readFileContent.
         fileContent = readFileContent(task.file_path)
         
-        -- TEST-- processTask correctly calls constructLlmPrompt.
-        prompt = constructLlmPrompt(task.file_path, fileContent)
+        -- TEST-- processTask correctly calls analyzeFileContent.
+        llmAnalysisResult = analyzeFileContent(task.file_path, fileContent)
         
-        -- TEST-- processTask correctly calls the LLM with retries.
-        llmResponseText = callLlmWithRetries(prompt, DEEPSEEK_API_KEY, LLM_RETRY_COUNT, LLM_BACKOFF_FACTOR)
+        -- The raw response text is needed for hashing to avoid complexities of canonicalization.
+        rawJsonString = JSON.stringify(llmAnalysisResult)
         
-        -- TEST-- processTask correctly calls validateLlmResponse.
-        validatedJson = validateLlmResponse(llmResponseText)
-        
-        -- TEST-- processTask correctly calls canonicalizeJson.
-        canonicalJsonString = canonicalizeJson(validatedJson)
+        -- TEST-- processTask correctly calls computeSha256Hash on the raw JSON string.
+        responseHash = computeSha256Hash(rawJsonString)
 
         -- TEST-- processTask calls saveSuccessResult on a fully successful workflow.
-        saveSuccessResult(db, task.id, canonicalJsonString)
+        saveSuccessResult(db, task.id, rawJsonString, responseHash)
         logInfo("Successfully processed and stored result for task ID-- " + task.id)
 
     CATCH FileNotFoundError as e
@@ -101,8 +101,75 @@ FUNCTION processTask(db, task)
     END TRY
 END FUNCTION
 
+FUNCTION analyzeFileContent(filePath, fileContent)
+    -- INPUT-- filePath (String), fileContent (String)
+    -- OUTPUT-- A single JSON object representing the complete analysis.
+    -- THROWS-- LlmCallFailedError, InvalidJsonResponseError
+    -- TEST-- For a file below threshold, it calls constructLlmPrompt once and returns the result.
+    -- TEST-- For a file above threshold, it calls createChunks.
+    -- TEST-- For a large file, it calls the LLM for each chunk and aggregates the results.
+    -- TEST-- For a large file, it correctly deduplicates entities and relationships from the aggregated chunks.
+
+    IF length(fileContent) <= FILE_SIZE_THRESHOLD_KB * 1024 THEN
+        prompt = constructLlmPrompt(filePath, fileContent)
+        llmResponseText = callLlmWithRetries(prompt, DEEPSEEK_API_KEY, LLM_RETRY_COUNT, LLM_BACKOFF_FACTOR)
+        validatedJson = validateLlmResponse(llmResponseText)
+        RETURN validatedJson
+    ELSE
+        chunks = createChunks(fileContent, CHUNK_SIZE_KB * 1024, CHUNK_OVERLAP_LINES)
+        allEntities = []
+        allRelationships = []
+        
+        LOOP for i from 0 to length(chunks) - 1
+            chunk = chunks[i]
+            prompt = constructLlmPromptForChunk(filePath, chunk, i + 1, length(chunks))
+            chunkResponseText = callLlmWithRetries(prompt, DEEPSEEK_API_KEY, LLM_RETRY_COUNT, LLM_BACKOFF_FACTOR)
+            chunkJson = validateLlmResponse(chunkResponseText)
+            
+            APPEND all elements of chunkJson.entities TO allEntities
+            APPEND all elements of chunkJson.relationships TO allRelationships
+        END LOOP
+        
+        -- Deduplication is crucial to merge overlapping analyses correctly.
+        -- The exact mechanism for deduplication (e.g., based on 'qualifiedName') needs to be defined.
+        uniqueEntities = deduplicate(allEntities, key="qualifiedName")
+        uniqueRelationships = deduplicate(allRelationships, key="source_qName,target_qName,type")
+
+        RETURN {
+            "filePath": filePath,
+            "entities": uniqueEntities,
+            "relationships": uniqueRelationships,
+            "is_chunked": true
+        }
+    END IF
+END FUNCTION
+
 
 ## 4. Helper Functions
+
+FUNCTION createChunks(content, chunkSize, overlapLines)
+    -- INPUT-- content (String), chunkSize (Integer), overlapLines (Integer)
+    -- OUTPUT-- Array of Strings (chunks)
+    -- TEST-- Returns a single chunk if content is smaller than chunkSize.
+    -- TEST-- Returns multiple chunks for larger content.
+    -- TEST-- Correctly overlaps consecutive chunks by overlapLines.
+    -- TEST-- The combination of all chunks (without overlap) reconstructs the original content.
+    
+    lines = split(content, "\n")
+    chunks = []
+    currentPosition = 0
+    
+    WHILE currentPosition < length(lines)
+        endPosition = findPositionForChunkSize(lines, currentPosition, chunkSize)
+        chunkLines = lines from currentPosition to endPosition
+        ADD join(chunkLines, "\n") to chunks
+        
+        overlapStart = max(0, endPosition - overlapLines)
+        currentPosition = overlapStart
+    END WHILE
+    
+    RETURN chunks
+END FUNCTION
 
 FUNCTION readFileContent(filePath)
     -- INPUT-- filePath (String)
@@ -131,6 +198,19 @@ FUNCTION constructLlmPrompt(filePath, fileContent)
     RETURN { system-- systemPrompt, user-- userPrompt }
 END FUNCTION
 
+FUNCTION constructLlmPromptForChunk(filePath, chunkContent, chunkNum, totalChunks)
+    -- INPUT-- filePath (String), chunkContent (String), chunkNum (Integer), totalChunks (Integer)
+    -- OUTPUT-- Prompt (Object)
+    -- TEST-- The system prompt correctly instructs the LLM that it is seeing a partial file.
+    -- TEST-- The user prompt includes the file path, chunk number, and total chunks.
+
+    systemPrompt = "You are an expert code analysis tool. You are analyzing a chunk of a larger file. Focus only on the code provided in this chunk. Output a single, valid JSON object with 'entities' and 'relationships' found *within this chunk*. Do not include a 'filePath' key. All code entities must have a 'qualifiedName'. Be aware that some relationships may span across chunks; only declare relationships where you can identify both source and target within this chunk."
+
+    userPrompt = "Analyze chunk " + chunkNum + " of " + totalChunks + " for the file '" + filePath + "'.\n\n---\n\n" + chunkContent
+
+    RETURN { system-- systemPrompt, user-- userPrompt }
+END FUNCTION
+
 FUNCTION callLlmWithRetries(prompt, apiKey, retryCount, backoffFactor)
     -- INPUT-- prompt (Object), apiKey (String), retryCount (Integer), backoffFactor (Integer)
     -- OUTPUT-- String (LLM response text)
@@ -148,10 +228,8 @@ FUNCTION callLlmWithRetries(prompt, apiKey, retryCount, backoffFactor)
             IF response.statusCode >= 200 AND response.statusCode < 300 THEN
                 RETURN response.body
             ELSE IF response.statusCode >= 500 THEN
-                -- Server-side error, retry
                 logWarning("LLM API returned server error-- " + response.statusCode + ". Retrying...")
             ELSE
-                -- Client-side error, don't retry
                 THROW new LlmCallFailedError("LLM API returned client error-- " + response.statusCode)
             END IF
         CATCH NetworkError as e
@@ -170,9 +248,9 @@ FUNCTION validateLlmResponse(responseText)
     -- INPUT-- responseText (String)
     -- OUTPUT-- Parsed JSON (Object)
     -- THROWS-- InvalidJsonResponseError
-    -- TEST-- Given a valid JSON string matching the schema, it returns the parsed object.
+    -- TEST-- Given a valid JSON string, it returns the parsed object.
     -- TEST-- Given a non-JSON string, it throws InvalidJsonResponseError.
-    -- TEST-- Given valid JSON missing a required root key ('filePath', 'entities', 'relationships'), it throws InvalidJsonResponseError.
+    -- TEST-- Given valid JSON missing 'entities' or 'relationships' (for chunks or full files), it throws InvalidJsonResponseError.
     
     TRY
         parsedJson = JSON.parse(responseText)
@@ -180,42 +258,34 @@ FUNCTION validateLlmResponse(responseText)
         THROW new InvalidJsonResponseError("Response is not valid JSON.")
     END TRY
     
-    IF "filePath" NOT IN parsedJson OR "entities" NOT IN parsedJson OR "relationships" NOT IN parsedJson THEN
-        THROW new InvalidJsonResponseError("JSON is missing required root keys.")
+    IF "entities" NOT IN parsedJson OR "relationships" NOT IN parsedJson THEN
+        THROW new InvalidJsonResponseError("JSON is missing required 'entities' or 'relationships' keys.")
     END IF
     
     RETURN parsedJson
 END FUNCTION
 
-FUNCTION canonicalizeJson(jsonObject)
-    -- INPUT-- jsonObject (Object)
-    -- OUTPUT-- String (canonicalized JSON string)
-    -- TEST-- It correctly sorts keys in a simple object.
-    -- TEST-- It correctly sorts elements in an array of objects.
-    -- TEST-- It handles nested objects and arrays recursively, sorting all keys.
-    -- TEST-- Two functionally identical but differently ordered objects produce the exact same output string.
-
-    -- This is a conceptual function. The implementation would involve recursively
-    -- traversing the JSON structure, sorting object keys alphabetically at each level,
-    -- and then serializing it to a string without extra whitespace.
+FUNCTION computeSha256Hash(text)
+    -- INPUT-- text (String)
+    -- OUTPUT-- String (SHA-256 hash)
+    -- TEST-- Returns a known, correct SHA-256 hash for a given input string.
+    -- TEST-- Returns different hashes for different input strings.
     
-    RETURN recursivelySortKeysAndStringify(jsonObject)
+    RETURN SHA256(text)
 END FUNCTION
 
-
-FUNCTION saveSuccessResult(db, taskId, canonicalJsonString)
-    -- INPUT-- db (DatabaseConnection), taskId (Integer), canonicalJsonString (String)
+FUNCTION saveSuccessResult(db, taskId, rawJsonString, jsonHash)
+    -- INPUT-- db (DatabaseConnection), taskId (Integer), rawJsonString (String), jsonHash (String)
     -- OUTPUT-- None
     -- THROWS-- DatabaseError
-    -- TDD Anchor-- Test that a new record is created in analysis_results with the correct taskId and llm_output.
+    -- TDD Anchor-- Test that a new record is created in analysis_results with the correct taskId, llm_output, and llm_output_hash.
     -- TDD Anchor-- Test that the work_queue item corresponding to taskId is marked 'completed'.
     -- TDD Anchor-- Test that both the INSERT and UPDATE happen within a single, atomic transaction.
-    -- TDD Anchor-- Test that if the INSERT fails, the UPDATE is rolled back.
     
     BEGIN TRANSACTION
     TRY
-        insertSql = "INSERT INTO analysis_results (work_item_id, llm_output, status) VALUES (?, ?, 'pending_ingestion');"
-        db.execute(insertSql, taskId, canonicalJsonString)
+        insertSql = "INSERT INTO analysis_results (work_item_id, llm_output, llm_output_hash, status) VALUES (?, ?, ?, 'pending_ingestion');"
+        db.execute(insertSql, taskId, rawJsonString, jsonHash)
         
         updateSql = "UPDATE work_queue SET status = 'completed' WHERE id = ?;"
         db.execute(updateSql, taskId)
@@ -233,7 +303,6 @@ FUNCTION handleProcessingFailure(db, taskId, errorMessage)
     -- THROWS-- DatabaseError
     -- TDD Anchor-- Test that a new record is created in the failed_work table with the correct work_item_id and error message.
     -- TDD Anchor-- Test that the corresponding work_queue item is marked as 'failed'.
-    -- TDD Anchor-- Test that both writes occur in a single transaction.
     
     BEGIN TRANSACTION
     TRY
