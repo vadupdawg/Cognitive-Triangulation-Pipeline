@@ -34,8 +34,8 @@ class DeepSeekClient {
             const response = await this.client.chat.completions.create({
                 model: 'deepseek-chat',
                 messages: messages,
-                temperature: 0.1, // Low temperature for consistent code analysis
-                max_tokens: 4000,
+                temperature: 0.0, // Minimum temperature for most consistent/concise output
+                max_tokens: 8000, // Maximum allowed for deepseek-chat
                 stream: false
             });
 

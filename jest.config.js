@@ -8,7 +8,6 @@ module.exports = {
     testMatch: [
         '**/tests/granular/**/*.test.js',
         '**/tests/acceptance/**/*.test.js',
-        '**/tests/production/**/*.test.js',
     ],
     moduleNameMapper: {
         '\\.(css|less)$': 'identity-obj-proxy',

@@ -21,7 +21,7 @@ let driver;
  * @returns {neo4j.Driver} The Neo4j driver instance.
  */
 function getDriver() {
-  if (!driver) {
+  if (!driver || driver._closed) {
     // In a real app, connection details would come from environment variables
     // and you'd have more robust error handling and connection management.
     driver = neo4j.driver(
@@ -32,6 +32,15 @@ function getDriver() {
   return driver;
 }
 
-// The actual module exports the driver instance directly, which is what the
-// tests will mock.
-module.exports = getDriver();
+// Export an object that always returns a fresh driver if needed
+module.exports = {
+  session: (config) => getDriver().session(config),
+  verifyConnectivity: () => getDriver().verifyConnectivity(),
+  close: () => {
+    if (driver && !driver._closed) {
+      return driver.close();
+    }
+  },
+  // For backward compatibility, allow direct access to driver methods
+  ...getDriver()
+};

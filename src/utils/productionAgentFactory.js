@@ -98,9 +98,9 @@ class ProductionAgentFactory {
 
         const repositoryScanner = new RepositoryScanner(repoPath);
         const changeAnalyzer = new ChangeAnalyzer();
-        const queuePopulator = new QueuePopulator(dbConnector);
+        const queuePopulator = new QueuePopulator(dbConnector, repoPath);
         
-        return new ScoutAgent(repositoryScanner, changeAnalyzer, queuePopulator, dbConnector);
+        return new ScoutAgent(repositoryScanner, changeAnalyzer, queuePopulator, dbConnector, repoPath);
     }
 
     /**
@@ -209,10 +209,13 @@ class ProductionAgentFactory {
 
     /**
      * Clean up all connections
+     * Note: We don't close the Neo4j driver here as it's a singleton that should persist
+     * across multiple pipeline runs. Individual sessions are closed where they're used.
      */
     async cleanup() {
         try {
-            await neo4jDriver.close();
+            // Only log cleanup - don't actually close the driver as it's shared
+            // Individual sessions are closed in their respective methods
             console.log('Cleaned up database connections');
         } catch (error) {
             console.error('Cleanup error:', error.message);

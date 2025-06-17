@@ -20,6 +20,7 @@ const EXCLUSION_PATTERNS = [
     /\.log$/,
     /\.env$/,
     /\.env\./,
+    /\.roomodes$/,
     
     // Binary and compiled files
     /\.o$/,
@@ -221,9 +222,11 @@ class ChangeAnalyzer {
 class QueuePopulator {
     /**
      * @param {any} dbConnector
+     * @param {string} repoPath - The absolute path to the repository
      */
-    constructor(dbConnector) {
+    constructor(dbConnector, repoPath) {
         this.dbConnector = dbConnector;
+        this.repoPath = repoPath;
     }
 
     /**
@@ -235,24 +238,28 @@ class QueuePopulator {
 
         // Process work queue items sequentially to avoid database locking issues
         for (const [filePath, contentHash] of filesToProcess) {
+            const absoluteFilePath = path.resolve(this.repoPath, filePath);
             await this.dbConnector.execute(
-                'INSERT INTO work_queue (file_path, content_hash, status) VALUES (?, ?, ?)',
-                [filePath, contentHash, 'pending']
+                'INSERT INTO work_queue (file_path, absolute_file_path, content_hash, status) VALUES (?, ?, ?, ?)',
+                [filePath, absoluteFilePath, contentHash, 'pending']
             );
         }
 
         // Process refactoring tasks sequentially
         for (const filePath of changes.deletedFiles) {
+            const absoluteFilePath = path.resolve(this.repoPath, filePath);
             await this.dbConnector.execute(
-                'INSERT INTO refactoring_tasks (task_type, old_path, new_path) VALUES (?, ?, ?)',
-                ['DELETE', filePath, null]
+                'INSERT INTO refactoring_tasks (task_type, old_path, new_path, absolute_old_path, absolute_new_path) VALUES (?, ?, ?, ?, ?)',
+                ['DELETE', filePath, null, absoluteFilePath, null]
             );
         }
 
         for (const { oldPath, newPath } of changes.renamedFiles) {
+            const absoluteOldPath = path.resolve(this.repoPath, oldPath);
+            const absoluteNewPath = path.resolve(this.repoPath, newPath);
             await this.dbConnector.execute(
-                'INSERT INTO refactoring_tasks (task_type, old_path, new_path) VALUES (?, ?, ?)',
-                ['RENAME', oldPath, newPath]
+                'INSERT INTO refactoring_tasks (task_type, old_path, new_path, absolute_old_path, absolute_new_path) VALUES (?, ?, ?, ?, ?)',
+                ['RENAME', oldPath, newPath, absoluteOldPath, absoluteNewPath]
             );
         }
     }
@@ -261,9 +268,11 @@ class QueuePopulator {
 class StatePersistor {
     /**
      * @param {any} dbConnector
+     * @param {string} repoPath - The absolute path to the repository
      */
-    constructor(dbConnector) {
+    constructor(dbConnector, repoPath) {
         this.dbConnector = dbConnector;
+        this.repoPath = repoPath;
     }
 
     /**
@@ -274,9 +283,10 @@ class StatePersistor {
         await this.dbConnector.execute('DELETE FROM file_state', []);
         // Process state persistence sequentially to avoid database locking issues
         for (const [filePath, contentHash] of state) {
+            const absoluteFilePath = path.resolve(this.repoPath, filePath);
             await this.dbConnector.execute(
-                'INSERT INTO file_state (file_path, content_hash) VALUES (?, ?)',
-                [filePath, contentHash]
+                'INSERT INTO file_state (file_path, absolute_file_path, content_hash) VALUES (?, ?, ?)',
+                [filePath, absoluteFilePath, contentHash]
             );
         }
     }
@@ -288,13 +298,15 @@ class ScoutAgent {
      * @param {ChangeAnalyzer} changeAnalyzer
      * @param {QueuePopulator} queuePopulator
      * @param {any} dbConnector
+     * @param {string} repoPath - The absolute path to the repository
      */
-    constructor(repositoryScanner, changeAnalyzer, queuePopulator, dbConnector) {
+    constructor(repositoryScanner, changeAnalyzer, queuePopulator, dbConnector, repoPath) {
         this.repositoryScanner = repositoryScanner;
         this.changeAnalyzer = changeAnalyzer;
         this.queuePopulator = queuePopulator;
         this.dbConnector = dbConnector;
-        this.statePersistor = new StatePersistor(dbConnector);
+        this.repoPath = repoPath;
+        this.statePersistor = new StatePersistor(dbConnector, repoPath);
     }
 
     /**

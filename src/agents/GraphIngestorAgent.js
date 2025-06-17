@@ -67,8 +67,15 @@ const llmOutputSchema = {
 const validateLlmOutput = ajv.compile(llmOutputSchema);
 
 // Whitelists to prevent Cypher injection.
-const ALLOWED_NODE_LABELS = new Set(['File', 'Function', 'Class', 'Variable', 'Interface', 'TypeAlias', 'Enum']);
-const ALLOWED_REL_TYPES = new Set(['IMPORTS', 'EXPORTS', 'CONTAINS', 'CALLS', 'USES', 'EXTENDS', 'IMPLEMENTS']);
+const ALLOWED_NODE_LABELS = new Set([
+  'File', 'Function', 'Class', 'Variable', 'Interface', 'TypeAlias', 'Enum',
+  'Method', 'Property', 'Parameter', 'Import', 'Export', 'Module', 
+  'Table', 'Schema', 'Config'
+]);
+const ALLOWED_REL_TYPES = new Set([
+  'IMPORTS', 'EXPORTS', 'CONTAINS', 'CALLS', 'USES', 'EXTENDS', 'IMPLEMENTS',
+  'DEFINES', 'REFERENCES', 'CONNECTS_TO'
+]);
 
 
 /**
@@ -79,19 +86,24 @@ const ALLOWED_REL_TYPES = new Set(['IMPORTS', 'EXPORTS', 'CONTAINS', 'CALLS', 'U
 async function handleRefactoring(transaction, refactoringBatch) {
   for (const task of refactoringBatch) {
     if (task.type === 'DELETE') {
+      // Use absolute path for robust identification
+      const absoluteOldPath = task.absolute_old_path || task.old_path;
       const query = 'MATCH (n {filePath: $filePath}) DETACH DELETE n';
       await transaction.run(query, {
-        filePath: task.old_path
+        filePath: absoluteOldPath
       });
     } else if (task.type === 'RENAME') {
+      // Use absolute paths for robust identification
+      const absoluteOldPath = task.absolute_old_path || task.old_path;
+      const absoluteNewPath = task.absolute_new_path || task.new_path;
       const query = `
         MATCH (n {filePath: $old_path})
         SET n.filePath = $new_path,
             n.qualifiedName = replace(n.qualifiedName, $old_path, $new_path)
       `;
       await transaction.run(query, {
-        old_path: task.old_path,
-        new_path: task.new_path,
+        old_path: absoluteOldPath,
+        new_path: absoluteNewPath,
       });
     }
   }
@@ -153,6 +165,18 @@ function prepareGraphData(analysisBatch) {
           name: entity.name,
           filePath: entity.filePath || llm_output.filePath, // Use entity's filePath or fall back to main filePath
           signature: entity.signature,
+          isExported: entity.isExported,
+          startLine: entity.startLine,
+          endLine: entity.endLine,
+          // Flatten metadata properties
+          language: entity.metadata?.language,
+          scope: entity.metadata?.scope,
+          accessibility: entity.metadata?.accessibility,
+          isAsync: entity.metadata?.isAsync,
+          parameters: entity.metadata?.parameters ? JSON.stringify(entity.metadata.parameters) : null,
+          returnType: entity.metadata?.returnType,
+          importPath: entity.metadata?.importPath,
+          isDefault: entity.metadata?.isDefault
         });
         nodesByLabel.get(label).push(properties);
       }
@@ -172,6 +196,10 @@ function prepareGraphData(analysisBatch) {
         relsByType.get(type).push({
           source_qualifiedName: rel.source_qualifiedName,
           target_qualifiedName: rel.target_qualifiedName,
+          context: rel.details?.context,
+          lineNumber: rel.details?.lineNumber,
+          importPath: rel.details?.importPath,
+          isDefault: rel.details?.isDefault
         });
       }
     }
@@ -219,6 +247,10 @@ async function createRelationships(transaction, relsByType) {
         MATCH (source {qualifiedName: rel.source_qualifiedName})
         MATCH (target {qualifiedName: rel.target_qualifiedName})
         MERGE (source)-[r:\`${type}\`]->(target)
+        SET r.context = rel.context,
+            r.lineNumber = rel.lineNumber,
+            r.importPath = rel.importPath,
+            r.isDefault = rel.isDefault
         RETURN r
       `;
       const result = await transaction.run(query, {
