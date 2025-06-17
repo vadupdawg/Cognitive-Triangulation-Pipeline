@@ -11,7 +11,7 @@ const neo4jDriver = require('../utils/neo4jDriver');
 const sqliteDb = require('../utils/sqliteDb');
 const {
   NEO4J_DATABASE
-} = require('../config');
+} = require('../../config');
 
 // --- Security and Validation Setup ---
 

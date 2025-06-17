@@ -4,10 +4,19 @@
     "jest": "^30.0.0"
   },
   "scripts": {
-    "test": "jest"
+    "test": "jest",
+    "start": "node run.js all",
+    "scout": "node run.js scout",
+    "worker": "node run.js worker",
+    "ingestor": "node run.js ingestor",
+    "init-db": "node src/utils/initializeDb.js"
   },
   "dependencies": {
     "ajv": "^8.16.0",
-    "dotenv": "^16.5.0"
+    "dotenv": "^16.5.0",
+    "fs-extra": "^11.2.0",
+    "neo4j-driver": "^5.22.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
   }
 }

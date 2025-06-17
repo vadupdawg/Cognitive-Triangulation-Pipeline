@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { Box, Tabs, Tab, Typography } from '@mui/material';
+import { Box, Tabs, Tab } from '@mui/material';
+import Dashboard from '../Dashboard/Dashboard';
 import WorkQueueExplorer from '../WorkQueue/WorkQueueExplorer';
 import AnalysisResultsViewer from '../AnalysisResults/AnalysisResultsViewer';
+import FailedWorkInspector from '../FailedWork/FailedWorkInspector';
+import GraphExplorer from '../GraphExplorer/GraphExplorer';
 
 // Tab panel component to display content for each tab
 function TabPanel({ children, value, index, ...other }) {
@@ -50,12 +53,7 @@ const MainTabs = () => {
       </Box>
       
       <TabPanel value={value} index={0}>
-        <Typography variant="h5" gutterBottom>
-          Pipeline Dashboard
-        </Typography>
-        <Typography variant="body1">
-          High-level overview of the entire pipeline's health and status will be displayed here.
-        </Typography>
+        <Dashboard />
       </TabPanel>
       
       <TabPanel value={value} index={1}>
@@ -67,21 +65,11 @@ const MainTabs = () => {
       </TabPanel>
       
       <TabPanel value={value} index={3}>
-        <Typography variant="h5" gutterBottom>
-          Failed Work Inspector
-        </Typography>
-        <Typography variant="body1">
-          Tasks that have failed permanently will be displayed here for debugging.
-        </Typography>
+        <FailedWorkInspector />
       </TabPanel>
       
       <TabPanel value={value} index={4}>
-        <Typography variant="h5" gutterBottom>
-          Graph Explorer
-        </Typography>
-        <Typography variant="body1">
-          Interactive interface for visualizing and querying the Neo4j knowledge graph will be displayed here.
-        </Typography>
+        <GraphExplorer />
       </TabPanel>
     </Box>
   );

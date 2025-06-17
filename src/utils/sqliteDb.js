@@ -10,7 +10,7 @@
 
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
-const { SQLITE_DB_PATH } = require('../config');
+const { SQLITE_DB_PATH } = require('../../config');
 
 // This is a placeholder for the actual database connection.
 // The real implementation would initialize this in a more robust way.
