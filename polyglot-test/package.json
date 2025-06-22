@@ -1,0 +1,90 @@
+{
+  "name": "polyglot-test-app",
+  "version": "1.0.0",
+  "description": "Multi-language test application for code analysis validation",
+  "main": "js/server.js",
+  "scripts": {
+    "start": "node js/server.js",
+    "dev": "nodemon js/server.js",
+    "test": "jest",
+    "lint": "eslint js/",
+    "python-setup": "pip install -r requirements.txt",
+    "java-compile": "javac -cp \".:lib/*\" java/*.java",
+    "java-run": "java -cp \".:lib/*\" com.polyglot.services.UserService",
+    "setup-db": "sqlite3 polyglot_test.db < database/schema.sql",
+    "load-test-data": "sqlite3 polyglot_test.db < database/test_data.sql",
+    "full-setup": "npm install && npm run python-setup && npm run java-compile && npm run setup-db && npm run load-test-data",
+    "start-all": "concurrently \"npm start\" \"python python/data_processor.py\" \"java -cp .:lib/* com.polyglot.services.UserService\"",
+    "check-health": "node js/health-check.js"
+  },
+  "keywords": [
+    "polyglot",
+    "multi-language",
+    "code-analysis",
+    "testing",
+    "javascript",
+    "python",
+    "java",
+    "sqlite"
+  ],
+  "author": "Polyglot Test Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "dotenv": "^16.3.1",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "compression": "^1.7.4",
+    "sqlite3": "^5.1.6",
+    "multer": "^1.4.5",
+    "uuid": "^9.0.1",
+    "crypto": "^1.0.1",
+    "fs-extra": "^11.1.1",
+    "axios": "^1.6.2",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3",
+    "eslint": "^8.56.0",
+    "eslint-config-standard": "^17.1.0",
+    "concurrently": "^8.2.2",
+    "@types/node": "^20.10.5"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polyglot-test/polyglot-app.git"
+  },
+  "bugs": {
+    "url": "https://github.com/polyglot-test/polyglot-app/issues"
+  },
+  "homepage": "https://github.com/polyglot-test/polyglot-app#readme",
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverage": true,
+    "coverageDirectory": "coverage",
+    "coverageReporters": ["text", "lcov", "html"],
+    "testMatch": ["**/__tests__/**/*.js", "**/?(*.)+(spec|test).js"]
+  },
+  "eslintConfig": {
+    "extends": ["standard"],
+    "env": {
+      "node": true,
+      "jest": true
+    },
+    "rules": {
+      "no-console": "warn",
+      "semi": ["error", "always"]
+    }
+  }
+} 

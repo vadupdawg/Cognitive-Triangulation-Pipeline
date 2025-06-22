@@ -7,7 +7,7 @@ module.exports = {
         '**/tests/integration/**/*.test.js',
     ],
     setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
-    globalSetup: '<rootDir>/jest.globalSetup.js',
-    globalTeardown: '<rootDir>/jest.globalTeardown.js',
+      // globalSetup: '<rootDir>/jest.globalSetup.js',
+  // globalTeardown: '<rootDir>/jest.globalTeardown.js',
     testTimeout: 30000, // 30 seconds for integration tests
 };

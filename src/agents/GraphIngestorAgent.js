@@ -433,9 +433,7 @@ async function updateTaskStatus(db, tableName, status, ids) {
   }
   const placeholders = ids.map(() => '?').join(',');
   const query = `UPDATE ${tableName} SET status = ? WHERE id IN (${placeholders})`;
-  const stmt = await db.prepare(query);
-  await stmt.run([status, ...ids]);
-  await stmt.finalize();
+  await db.execute(query, [status, ...ids]);
 }
 
 

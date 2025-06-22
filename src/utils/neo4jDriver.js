@@ -9,7 +9,7 @@
 //
 
 const neo4j = require('neo4j-driver');
-const { NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD } = require('../../config');
+const { NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE } = require('../../config');
 
 // This is a placeholder for the actual driver instance.
 // The real implementation would initialize this based on environment variables.
@@ -34,7 +34,11 @@ function getDriver() {
 
 // Export an object that always returns a fresh driver if needed
 module.exports = {
-  session: (config) => getDriver().session(config),
+  session: (config = {}) => {
+    // Always specify the database from environment variable
+    const sessionConfig = { database: NEO4J_DATABASE, ...config };
+    return getDriver().session(sessionConfig);
+  },
   verifyConnectivity: () => getDriver().verifyConnectivity(),
   close: () => {
     if (driver && !driver._closed) {
@@ -42,5 +46,5 @@ module.exports = {
     }
   },
   // For backward compatibility, allow direct access to driver methods
-  ...getDriver()
+  getDriver: () => getDriver()
 };

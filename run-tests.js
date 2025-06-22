@@ -30,6 +30,36 @@ const testSuites = [
     name: 'Integration Tests - Full Pipeline',
     path: 'tests/integration/pipeline-integration.test.js',
     description: 'Tests complete pipeline: Scout → Workers → Graph Ingestion'
+  },
+  {
+    name: 'AMCP Comprehensive Analysis - DEFINITION OF WORKING',
+    path: 'tests/integration/amcp-comprehensive-analysis.test.js',
+    description: '🎯 DEFINES WHAT "WORKING" MEANS: 47 files → 1,689 nodes → 5,299 relationships'
+  },
+  {
+    name: 'AMCP Pipeline Validation',
+    path: 'tests/integration/amcp-pipeline-validation.test.js',
+    description: 'Tests complete AMCP directory analysis: Scout → 50 Workers → SQLite → Neo4j'
+  },
+  {
+    name: 'AMCP Schema Validation',
+    path: 'tests/integration/amcp-schema-validation.test.js',
+    description: 'Manual file inspection and schema validation for AMCP directory'
+  },
+  {
+    name: 'Neo4j Data Validation',
+    path: 'tests/integration/neo4j-data-validation.test.js',
+    description: 'Validates SQLite data perfectly matches Neo4j ingestion'
+  },
+  {
+    name: 'AMCP Import/Export Validation - FOCUSED RELATIONSHIP TESTING',
+    path: 'tests/integration/amcp-import-export-validation.test.js',
+    description: '🔗 CRITICAL: Validates import/export relationship detection across files and languages'
+  },
+  {
+    name: 'AMCP Production Pipeline - REAL LLM TESTING',
+    path: 'tests/integration/amcp-production-pipeline.test.js',
+    description: '🚀 PRODUCTION: Real DeepSeek LLM analysis of 5 AMCP files (2-3 minutes)'
   }
 ];
 
