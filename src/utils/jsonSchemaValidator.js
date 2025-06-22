@@ -16,7 +16,7 @@ class ValidationError extends Error {
 class JsonSchemaValidator {
     constructor() {
         // Valid entity types aligned with GraphIngestorAgent expectations
-        this.validEntityTypes = new Set(['Function', 'Class', 'Variable', 'File', 'Database', 'Table']);
+        this.validEntityTypes = new Set(['Function', 'Class', 'Variable', 'File', 'Database', 'Table', 'View']);
         
         // Valid relationship types - covers all expected relationships
         this.validRelationshipTypes = new Set(['CONTAINS', 'CALLS', 'USES', 'IMPORTS', 'EXPORTS', 'EXTENDS']);
@@ -72,18 +72,19 @@ class JsonSchemaValidator {
     }
 
     /**
-     * Creates a guardrail prompt that enforces absolute path usage
+     * Creates a guardrail prompt that instructs the LLM to read the file directly
      * @param {string} filePath - File path (will be converted to absolute)
-     * @param {string} fileContent - Optional file content (if not provided, will be read from filePath)
+     * @param {string} fileContent - Content of the file to analyze
+     * @param {string} projectContext - Project file tree context for cross-file analysis
      * @returns {Object} - Prompt object for LLM
      */
-    createGuardrailPrompt(filePath, fileContent = null) {
+    createGuardrailPrompt(filePath, fileContent, projectContext = null) {
         // Convert to absolute path for robust identification
         const absoluteFilePath = path.resolve(filePath);
         const baseDirectory = path.dirname(absoluteFilePath);
         const detectedLanguage = this._detectLanguage(absoluteFilePath);
         
-        const systemPrompt = `You are a universal code analysis AI. Analyze source code in ANY programming language to extract entities and relationships for a Neo4j knowledge graph.
+        const systemPrompt = `You are a universal code analysis AI. You will be given source code content to analyze and extract entities and relationships for a Neo4j knowledge graph.
 
 UNIVERSAL LANGUAGE SUPPORT:
 - JavaScript/TypeScript: require(), import/export, module.exports
@@ -96,15 +97,17 @@ UNIVERSAL LANGUAGE SUPPORT:
 - Ruby: require, include, module/class definitions
 - C/C++: #include, namespace, class inheritance
 - Swift: import, class/struct/protocol definitions
+- SQL: CREATE TABLE, CREATE VIEW, stored procedures
 - And 15+ more languages with their specific patterns
 
 ENTITY TYPES TO EXTRACT:
 - Function: Functions, methods, procedures (any callable code)
-- Class: Classes, structs, interfaces, traits, protocols  
+- Class: Classes, structs, interfaces, traits, protocols
 - Variable: Variables, constants, fields, properties
 - File: The source file being analyzed
 - Database: Database connections or database references
 - Table: Database tables (if found in SQL/ORM code)
+- View: Database views (if found in SQL code)
 
 RELATIONSHIP TYPES TO DETECT:
 - CONTAINS: File contains function/class/variable
@@ -114,73 +117,155 @@ RELATIONSHIP TYPES TO DETECT:
 - EXPORTS: File exports function/class/variable for other files
 - EXTENDS: Class extends/inherits from another class
 
-CRITICAL REQUIREMENTS:
-1. qualifiedName format: "ABSOLUTE_FILE_PATH--entityName" for local entities
-2. For external dependencies: "moduleName--entityName" (e.g., "express--express", "fs--readFile")  
-3. For file entities: Use the absolute file path as qualifiedName
-4. Detect imports/exports relationships between files
-5. Smart path resolution for different import styles
+**CRITICAL: CROSS-LANGUAGE POLYGLOT RELATIONSHIP DETECTION**
+You MUST also detect these advanced cross-language relationships:
 
-QUALIFIEDNAME GENERATION RULES:
-- Local entities (Function, Class, Variable): "\${absoluteFilePath}--\${entityName}"
-  Example: "C:\\code\\aback\\src\\utils\\config.js--loadConfig"
-- External dependencies in IMPORTS relationships: "\${moduleName}--\${moduleName}"
-  Example: "express--express", "fs--fs", "path--path"
-- File entities: Use the absolute file path directly
-  Example: "C:\\code\\aback\\src\\utils\\config.js"
-- Database entities: "\${absoluteFilePath}--\${databaseName}"
-  Example: "C:\\code\\aback\\src\\models\\user.js--userDB"
-- Table entities: "\${databaseContext}--\${tableName}" or "\${absoluteFilePath}--\${tableName}"
-  Example: "userDB--users" or "C:\\code\\aback\\schema.sql--users"
+1. **HTTP API ENDPOINT RELATIONSHIPS**:
+   - Look for HTTP requests (fetch, axios, requests.get, HttpClient, etc.)
+   - Extract the endpoint URLs (e.g., "/api/users", "/api/process")
+   - Create CALLS relationships from the calling function to a Function entity representing the API endpoint
+   - Example: JavaScript function making HTTP call to "/api/users" → CALLS → Function named "POST /api/users"
+
+2. **DATABASE QUERY RELATIONSHIPS**:
+   - Look for SQL queries, ORM calls, database operations
+   - Extract table names from SELECT, INSERT, UPDATE, DELETE statements
+   - Create USES relationships from functions to Table entities
+   - Example: Python function with "SELECT * FROM users" → USES → Table named "users"
+
+3. **CONFIGURATION DEPENDENCY RELATIONSHIPS**:
+   - Look for configuration file usage (config.js, settings.py, application.properties)
+   - Extract configuration keys being accessed
+   - Create USES relationships from functions to Variable entities representing config values
+   - Example: Function accessing "DATABASE_URL" → USES → Variable named "DATABASE_URL"
+
+4. **CROSS-LANGUAGE SERVICE MAPPINGS**:
+   - Look for service URLs, API base URLs, microservice endpoints
+   - Create relationships between services that communicate via HTTP
+   - Example: Java ApiClient calling Python service → CALLS → Function in Python service
+
+CRITICAL REQUIREMENTS:
+1. Entity format: Each entity must have type, name, and filePath fields
+2. For local entities: filePath should be the absolute path where they are defined
+3. For external dependencies: filePath should be the module name (e.g., "express", "fs")
+4. For file entities: filePath should be the absolute file path
+5. Relationships use nested objects with from/to containing full entity information
+6. Smart path resolution for different import styles
+7. **CROSS-FILE ANALYSIS**: Use the provided project context to identify relationships between the current file and other files in the project
+
+ENTITY GENERATION RULES:
+- Local entities (Function, Class, Variable): filePath = absolute file path where defined
+  Example: {"type": "Function", "name": "loadConfig", "filePath": "C:\\code\\aback\\src\\utils\\config.js"}
+- External dependencies: filePath = module name
+  Example: {"type": "Function", "name": "express", "filePath": "express"}
+- File entities: filePath = absolute file path
+  Example: {"type": "File", "name": "config.js", "filePath": "C:\\code\\aback\\src\\utils\\config.js"}
+- Database entities: filePath = absolute file path where referenced
+  Example: {"type": "Database", "name": "userDB", "filePath": "C:\\code\\aback\\src\\models\\user.js"}
 
 EXTERNAL DEPENDENCY DETECTION:
 - Node.js built-ins: fs, path, http, crypto, os, etc.
 - NPM packages: express, lodash, react, etc.
 - Language packages: Standard library modules
 
+**PROJECT CONTEXT ANALYSIS**:
+When project context is provided, you MUST:
+1. Look for relative imports (./file, ../file) and resolve them to absolute paths using the project context
+2. Identify when the current file imports from other project files listed in the context
+3. Create IMPORTS relationships to other project files when detected
+4. Look for function calls that might reference functions defined in other project files
+5. Create CALLS relationships to functions in other files when you can reasonably infer them
+
 JSON OUTPUT FORMAT (STRICT):
 {
   "filePath": "absolute_file_path",
   "entities": [
-    {"type": "Function", "name": "functionName", "qualifiedName": "absolute_path--functionName"},
-    {"type": "Class", "name": "MyClass", "qualifiedName": "absolute_path--MyClass"},
-    {"type": "Variable", "name": "config", "qualifiedName": "absolute_path--config"},
-    {"type": "Database", "name": "userDB", "qualifiedName": "absolute_path--userDB"},
-    {"type": "Table", "name": "users", "qualifiedName": "database--users"}
+    {"type": "Function", "name": "functionName", "filePath": "absolute_path"},
+    {"type": "Class", "name": "MyClass", "filePath": "absolute_path"},
+    {"type": "Variable", "name": "config", "filePath": "absolute_path"},
+    {"type": "Database", "name": "userDB", "filePath": "absolute_path"},
+    {"type": "Table", "name": "users", "filePath": "absolute_path"},
+    {"type": "View", "name": "user_summary", "filePath": "absolute_path"},
+    {"type": "File", "name": "filename.js", "filePath": "absolute_path"}
   ],
   "relationships": [
-    {"source_qualifiedName": "absolute_path", "target_qualifiedName": "express--express", "type": "IMPORTS"},
-    {"source_qualifiedName": "absolute_path", "target_qualifiedName": "absolute_path--functionName", "type": "CONTAINS"},
-    {"source_qualifiedName": "absolute_path--functionName", "target_qualifiedName": "absolute_path--config", "type": "USES"},
-    {"source_qualifiedName": "absolute_path--SubClass", "target_qualifiedName": "absolute_path--BaseClass", "type": "EXTENDS"},
-    {"source_qualifiedName": "absolute_path--functionName", "target_qualifiedName": "absolute_path--anotherFunction", "type": "CALLS"},
-    {"source_qualifiedName": "absolute_path", "target_qualifiedName": "absolute_path--MyClass", "type": "EXPORTS"}
+    {"from": {"type": "File", "name": "filename.js", "filePath": "absolute_path"}, "to": {"type": "Function", "name": "express", "filePath": "express"}, "type": "IMPORTS"},
+    {"from": {"type": "File", "name": "filename.js", "filePath": "absolute_path"}, "to": {"type": "Function", "name": "functionName", "filePath": "absolute_path"}, "type": "CONTAINS"},
+    {"from": {"type": "Function", "name": "functionName", "filePath": "absolute_path"}, "to": {"type": "Variable", "name": "config", "filePath": "absolute_path"}, "type": "USES"},
+    {"from": {"type": "Class", "name": "SubClass", "filePath": "absolute_path"}, "to": {"type": "Class", "name": "BaseClass", "filePath": "absolute_path"}, "type": "EXTENDS"},
+    {"from": {"type": "Function", "name": "functionName", "filePath": "absolute_path"}, "to": {"type": "Function", "name": "anotherFunction", "filePath": "absolute_path"}, "type": "CALLS"},
+    {"from": {"type": "File", "name": "filename.js", "filePath": "absolute_path"}, "to": {"type": "Class", "name": "MyClass", "filePath": "absolute_path"}, "type": "EXPORTS"}
   ]
 }
 
 IMPORTANT: Return ONLY the JSON object. No explanations, no markdown formatting, no additional text.`;
 
-        const userPrompt = `Please analyze the ${detectedLanguage} source code below from file: ${absoluteFilePath}
+        let userPrompt = `Please analyze the following ${detectedLanguage} source code file (${absoluteFilePath}):
 
-Base directory context: ${baseDirectory}
-
-FILE CONTENT:
 \`\`\`${detectedLanguage.toLowerCase()}
-${fileContent || 'FILE CONTENT NOT PROVIDED'}
+${fileContent}
 \`\`\`
+
+Base directory context: ${baseDirectory}`;
+
+        // Add project context if available
+        if (projectContext) {
+            userPrompt += `
+
+Project Context (File Tree):
+\`\`\`
+${projectContext}
+\`\`\`
+
+**IMPORTANT**: Use this project context to identify cross-file relationships. When you see relative imports (./file, ../file) or local module references, resolve them using the file tree above to create accurate IMPORTS relationships to other project files. Look for patterns where the current file might be calling functions or using classes defined in other project files listed in the context.`;
+        }
+
+        userPrompt += `
 
 Instructions:
 1. Analyze the provided source code content
-2. Detect the programming language and apply appropriate parsing patterns
-3. Extract all entities (functions, classes, variables, files, databases, tables) from the code
+2. Detect the programming language patterns and apply appropriate parsing
+3. Extract all entities (functions, classes, variables, files, databases, tables, views) from the code
 4. Identify relationships between entities (calls, uses, imports, exports, extends, contains)
 5. Convert relative import paths to absolute paths based on the base directory
 6. Distinguish between external dependencies and local file imports
-7. Generate qualifiedName values according to the QUALIFIEDNAME GENERATION RULES above:
-   - Local entities: "absoluteFilePath--entityName"
-   - External dependencies: "moduleName--moduleName"
-   - File entities: use absolute file path directly
-8. Return the analysis as a JSON object matching the required schema
+${projectContext ? '7. **CROSS-FILE ANALYSIS**: Use the provided project context to identify relationships between the current file and other files in the project' : ''}
+${projectContext ? '8' : '7'}. **CRITICAL POLYGLOT ANALYSIS**: Look for these specific patterns:
+   
+   **HTTP API Calls**:
+   - JavaScript: fetch(), axios.get(), http.request(), XMLHttpRequest
+   - Python: requests.get(), urllib.request(), httpx.get()
+   - Java: HttpClient, RestTemplate, OkHttp
+   - Extract endpoint URLs and create CALLS relationships to Function entities named after the endpoint
+   
+   **Database Operations**:
+   - SQL queries: SELECT/INSERT/UPDATE/DELETE statements
+   - ORM calls: .find(), .save(), .query(), .execute()
+   - Extract table names and create USES relationships to Table entities
+   
+   **Configuration Access**:
+   - JavaScript: process.env.VAR, config.get('key')
+   - Python: os.environ['VAR'], settings.DATABASE_URL
+   - Java: System.getProperty(), @Value annotations
+   - Create USES relationships to Variable entities for config keys
+   
+   **Service Communication**:
+   - Look for base URLs, service endpoints, microservice calls
+   - Create cross-language CALLS relationships between services
+
+${projectContext ? '9' : '8'}. Generate entity objects according to the ENTITY GENERATION RULES above:
+   - Local entities: filePath = absolute file path where defined
+   - External dependencies: filePath = module name
+   - File entities: filePath = absolute file path
+   - **API Endpoints**: Create Function entities with names like "GET /api/users" and filePath as the service base URL
+   - **Database Tables**: Create Table entities with filePath as the schema file or database connection
+   - **Config Variables**: Create Variable entities with filePath as the config file location
+
+${projectContext ? '10' : '9'}. Return the analysis as a JSON object matching the required schema
+
+**EXAMPLES OF EXPECTED RELATIONSHIPS**:
+- JavaScript function calling "/api/users" → CALLS → Function{"name": "GET /api/users", "type": "Function", "filePath": "http://localhost:8080"}
+- Python function with "SELECT * FROM users" → USES → Table{"name": "users", "type": "Table", "filePath": "database/schema.sql"}
+- Java method accessing config.getProperty("db.url") → USES → Variable{"name": "db.url", "type": "Variable", "filePath": "config.properties"}
 
 Return only the JSON analysis, no additional text or formatting.`;
 
@@ -293,7 +378,7 @@ Return only the JSON analysis, no additional text or formatting.`;
     }
     
     /**
-     * Validates entity structure and qualifiedName format
+     * Validates entity structure and filePath format
      * @param {Array} entities - Array of entities to validate
      * @param {string} expectedFilePath - Expected file path for validation
      */
@@ -304,8 +389,8 @@ Return only the JSON analysis, no additional text or formatting.`;
 
         entities.forEach((entity, index) => {
             // Validate required fields
-            if (!entity.type || !entity.name || !entity.qualifiedName) {
-                throw new ValidationError(`Entity ${index}: Missing required fields (type, name, qualifiedName)`);
+            if (!entity.type || !entity.name || !entity.filePath) {
+                throw new ValidationError(`Entity ${index}: Missing required fields (type, name, filePath)`);
             }
 
             // Validate entity type
@@ -313,24 +398,14 @@ Return only the JSON analysis, no additional text or formatting.`;
                 throw new ValidationError(`Entity ${index}: Invalid type "${entity.type}". Must be one of: ${Array.from(this.validEntityTypes).join(', ')}`);
             }
 
-            // For all entity types, qualifiedName must start with file path
-            // Exception: File entities use the file path directly as qualifiedName
+            // For File entities, filePath should match the expected file path
+            // For other entities, filePath should be the file they're defined in
             if (entity.type === 'File') {
-                // File entities should have qualifiedName as the absolute file path
-                if (entity.qualifiedName !== expectedFilePath) {
-                    throw new ValidationError(`Entity ${index}: File entity qualifiedName "${entity.qualifiedName}" must be the absolute file path "${expectedFilePath}"`);
-                }
-            } else if (entity.type === 'Database' || entity.type === 'Table') {
-                // For Database and Table entities, the qualifiedName format is more flexible.
-                // It can be "filePath--entityName", "databaseName--tableName", or just "entityName"
-                // if it's a generic entity. We will not enforce a strict format here.
-                // This is a "no-op" for now, allowing the test to pass.
-            } else {
-                // For all other entity types, qualifiedName must follow "filePath--entityName" format
-                if (!entity.qualifiedName.startsWith(expectedFilePath + '--')) {
-                    throw new ValidationError(`Entity ${index}: qualifiedName "${entity.qualifiedName}" must start with "${expectedFilePath}--"`);
+                if (entity.filePath !== expectedFilePath) {
+                    throw new ValidationError(`Entity ${index}: File entity filePath "${entity.filePath}" must be the absolute file path "${expectedFilePath}"`);
                 }
             }
+            // For other entity types, we allow flexible filePath (could be external dependencies)
         });
     }
     
@@ -338,16 +413,35 @@ Return only the JSON analysis, no additional text or formatting.`;
         for (let i = 0; i < relationships.length; i++) {
             const rel = relationships[i];
             
-            if (!rel.source_qualifiedName || typeof rel.source_qualifiedName !== 'string') {
-                throw new ValidationError(`Relationship ${i}: Missing or invalid source_qualifiedName`);
+            if (!rel.from || typeof rel.from !== 'object') {
+                throw new ValidationError(`Relationship ${i}: Missing or invalid 'from' object`);
             }
             
-            if (!rel.target_qualifiedName || typeof rel.target_qualifiedName !== 'string') {
-                throw new ValidationError(`Relationship ${i}: Missing or invalid target_qualifiedName`);
+            if (!rel.to || typeof rel.to !== 'object') {
+                throw new ValidationError(`Relationship ${i}: Missing or invalid 'to' object`);
             }
             
             if (!rel.type || !this.validRelationshipTypes.has(rel.type)) {
                 throw new ValidationError(`Relationship ${i}: Invalid type "${rel.type}". Must be one of: ${Array.from(this.validRelationshipTypes).join(', ')}`);
+            }
+            
+            // Validate 'from' object
+            if (!rel.from.type || !rel.from.name || !rel.from.filePath) {
+                throw new ValidationError(`Relationship ${i}: 'from' object missing required fields (type, name, filePath)`);
+            }
+            
+            // Validate 'to' object
+            if (!rel.to.type || !rel.to.name || !rel.to.filePath) {
+                throw new ValidationError(`Relationship ${i}: 'to' object missing required fields (type, name, filePath)`);
+            }
+            
+            // Validate entity types in relationships
+            if (!this.validEntityTypes.has(rel.from.type)) {
+                throw new ValidationError(`Relationship ${i}: Invalid 'from' type "${rel.from.type}". Must be one of: ${Array.from(this.validEntityTypes).join(', ')}`);
+            }
+            
+            if (!this.validEntityTypes.has(rel.to.type)) {
+                throw new ValidationError(`Relationship ${i}: Invalid 'to' type "${rel.to.type}". Must be one of: ${Array.from(this.validEntityTypes).join(', ')}`);
             }
         }
     }
@@ -388,39 +482,6 @@ Return only the JSON analysis, no additional text or formatting.`;
         return false;
     }
 
-    /**
-     * Enforces absolute path consistency for relationship target_qualifiedName
-     * @param {Object} response - Validated response object
-     * @returns {Object} - Response with enforced absolute paths
-     */
-    _enforceAbsolutePathConsistency(response) {
-        // Convert relationships to use absolute paths
-        if (response.relationships) {
-            response.relationships = response.relationships.map(rel => {
-                // Extract the path part from target_qualifiedName
-                const parts = rel.target_qualifiedName.split('--');
-                if (parts.length >= 2) {
-                    const targetPath = parts[0];
-                    const entityName = parts.slice(1).join('--');
-                    
-                    // Only resolve if it's NOT an external dependency
-                    if (!this._isExternalDependency(targetPath)) {
-                        if (!path.isAbsolute(targetPath)) {
-                            // Convert relative path to absolute
-                            const baseDir = path.dirname(response.filePath);
-                            const absoluteTargetPath = path.resolve(baseDir, targetPath);
-                            rel.target_qualifiedName = `${absoluteTargetPath}--${entityName}`;
-                        }
-                    }
-                    // For external dependencies, keep target_qualifiedName as-is
-                }
-                
-                return rel;
-            });
-        }
-        
-        return response;
-    }
 
     /**
      * Estimates token count (rough approximation: 1 token ≈ 4 characters)

@@ -10,7 +10,7 @@ class DeepSeekClient {
         this.client = new OpenAI({
             baseURL: 'https://api.deepseek.com',
             apiKey: process.env.DEEPSEEK_API_KEY,
-            timeout: 60000, // 60 second timeout
+            timeout: 600000, // 10 minutes timeout for complex analysis
             dangerouslyAllowBrowser: true, // Allow in test environment
         });
         
@@ -45,6 +45,16 @@ class DeepSeekClient {
             };
         } catch (error) {
             console.error('DeepSeek API call failed:', error.message);
+            
+            // Handle specific error types
+            if (error.status === 429) {
+                throw new Error(`DeepSeek API rate limit exceeded: ${error.message}`);
+            } else if (error.status >= 500) {
+                throw new Error(`DeepSeek API server error: ${error.message}`);
+            } else if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
+                throw new Error(`DeepSeek API network timeout: ${error.message}`);
+            }
+            
             throw new Error(`DeepSeek API call failed: ${error.message}`);
         }
     }

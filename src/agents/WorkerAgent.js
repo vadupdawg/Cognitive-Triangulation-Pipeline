@@ -42,7 +42,7 @@ class WorkerAgent {
 
     // Get the task that was just claimed by this worker (most recent)
     const task = await this.db.get(
-        `SELECT id, file_id, file_path, content_hash
+        `SELECT id, file_id, file_path, content_hash, project_context
          FROM work_queue
          WHERE worker_id = ? AND status = 'processing'
          ORDER BY id DESC
@@ -64,7 +64,7 @@ class WorkerAgent {
     }
 
     return await this.db.get(
-        'SELECT id, file_id, file_path, content_hash FROM work_queue WHERE id = ?',
+        'SELECT id, file_id, file_path, content_hash, project_context FROM work_queue WHERE id = ?',
         [taskId]
     );
   }
@@ -84,26 +84,32 @@ class WorkerAgent {
           return;
       }
 
-             const absoluteFilePath = intendedFilePath; // Use the validated path
-             console.log(`[WorkerAgent] Absolute file path: ${absoluteFilePath}`);
+      const absoluteFilePath = intendedFilePath; // Use the validated path
+      console.log(`[WorkerAgent] Absolute file path: ${absoluteFilePath}`);
       
-            // Check file size to warn about potential memory issues
-            const stats = await fs.stat(absoluteFilePath);
-            const fileSizeInMB = stats.size / (1024 * 1024);
-            if (fileSizeInMB > 10) { // 10 MB threshold
-              console.warn(`[WorkerAgent] File ${task.file_path} is large (${fileSizeInMB.toFixed(2)}MB). Reading entire file into memory.`);
-            }
-             
-             // Read file content to be passed to the LLM
-             const fileContent = await fs.readFile(absoluteFilePath, 'utf-8');
-      // Let the LLM read and analyze the file directly
-      console.log(`[WorkerAgent] Creating guardrail prompt...`);
-      const prompt = this.validator.createGuardrailPrompt(absoluteFilePath, fileContent);
+      // CRITICAL FIX: Read the actual file content
+      console.log(`[WorkerAgent] Reading file content...`);
+      let fileContent;
+      try {
+        fileContent = await fs.readFile(absoluteFilePath, 'utf8');
+        console.log(`[WorkerAgent] File content read successfully (${fileContent.length} characters)`);
+      } catch (fileError) {
+        const errorMessage = `Failed to read file: ${fileError.message}`;
+        console.error(`[WorkerAgent] ${errorMessage}`);
+        await this._queueProcessingFailure(task.id, errorMessage);
+        return;
+      }
+      
+      // Create prompt with actual file content and project context
+      console.log(`[WorkerAgent] Creating guardrail prompt with file content and project context...`);
+      const prompt = this.validator.createGuardrailPrompt(absoluteFilePath, fileContent, task.project_context);
       console.log(`[WorkerAgent] Prompt created successfully`);
       
-      console.log(`[WorkerAgent] Calling LLM with retries...`);
+      console.log(`[WorkerAgent] Calling LLM with retries for file: ${task.file_path} (${fileContent.length} chars)...`);
+      const startTime = Date.now();
       const llmAnalysisResult = await this._callLlmWithRetries(prompt, absoluteFilePath);
-      console.log(`[WorkerAgent] LLM analysis completed`);
+      const endTime = Date.now();
+      console.log(`[WorkerAgent] LLM analysis completed for ${task.file_path} in ${endTime - startTime}ms`);
       
       // Queue the result for batch processing instead of immediate database write
       await this._queueSuccessResult(task.id, task.file_id, task.file_path, absoluteFilePath, JSON.stringify(llmAnalysisResult));
@@ -126,7 +132,7 @@ class WorkerAgent {
     }
   }
 
-  async _callLlmWithRetries(prompt, filePath, retries = 3) {
+  async _callLlmWithRetries(prompt, filePath, retries = 5) {
     let lastError;
     for (let i = 0; i < retries; i++) {
       try {
@@ -140,31 +146,51 @@ class WorkerAgent {
       } catch (error) {
         lastError = error;
         
-        if (error instanceof ValidationError && i < retries - 1) {
-          console.warn(`Validation failed for ${filePath}, attempt ${i + 1}/${retries}: ${error.message}`);
-          await new Promise(res => setTimeout(res, 1000 * Math.pow(2, i)));
+        // Handle rate limiting with longer delays
+        if (error.message.includes('rate limit') && i < retries - 1) {
+          const delay = 5000 * Math.pow(2, i); // 5s, 10s, 20s, 40s
+          console.warn(`Rate limit hit for ${filePath}, attempt ${i + 1}/${retries}, waiting ${delay}ms: ${error.message}`);
+          await new Promise(res => setTimeout(res, delay));
           continue;
         }
         
+        // Handle validation errors
+        if (error instanceof ValidationError && i < retries - 1) {
+          console.warn(`Validation failed for ${filePath}, attempt ${i + 1}/${retries}: ${error.message}`);
+          await new Promise(res => setTimeout(res, 2000 * Math.pow(2, i)));
+          continue;
+        }
+        
+        // Handle network/timeout errors
+        if ((error.message.includes('timeout') || error.message.includes('network')) && i < retries - 1) {
+          const delay = 3000 * Math.pow(2, i);
+          console.warn(`Network/timeout error for ${filePath}, attempt ${i + 1}/${retries}, waiting ${delay}ms: ${error.message}`);
+          await new Promise(res => setTimeout(res, delay));
+          continue;
+        }
+        
+        // General retry with exponential backoff
         if (i < retries - 1) {
-          await new Promise(res => setTimeout(res, 1000 * Math.pow(2, i)));
+          const delay = 1000 * Math.pow(2, i);
+          console.warn(`Error for ${filePath}, attempt ${i + 1}/${retries}, waiting ${delay}ms: ${error.message}`);
+          await new Promise(res => setTimeout(res, delay));
         }
       }
     }
     throw new LlmCallFailedError(`LLM call failed after ${retries} attempts: ${lastError.message}`);
   }
    async _queueSuccessResult(taskId, fileId, filePath, absoluteFilePath, rawJsonString) {
-    // The batch processor is designed to handle both storing the analysis result
-    // and updating the work queue status in an optimized manner.
-    await this.batchProcessor.queueAnalysisResult(
-      taskId,
-      fileId,
-      filePath,
-      absoluteFilePath,
-      rawJsonString
-    );
-    console.log(`[WorkerAgent] Success result queued for batch processing for task ${taskId}`);
-  }
+     // The batch processor is designed to handle both storing the analysis result
+     // and updating the work queue status in an optimized manner.
+     await this.batchProcessor.queueAnalysisResult(
+       taskId,
+       fileId,
+       filePath,
+       absoluteFilePath,
+       rawJsonString
+     );
+     console.log(`[WorkerAgent] Success result queued for batch processing for task ${taskId}`);
+   }
    async _queueProcessingFailure(taskId, errorMessage) {
     // Queue the failure for batch processing.
     await this.batchProcessor.queueFailedWork(taskId, errorMessage);

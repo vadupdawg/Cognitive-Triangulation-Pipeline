@@ -9,7 +9,7 @@
 //
 
 const neo4j = require('neo4j-driver');
-const { NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE } = require('../../config');
+const { NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE } = require('../config');
 
 // This is a placeholder for the actual driver instance.
 // The real implementation would initialize this based on environment variables.
@@ -24,6 +24,7 @@ function getDriver() {
   if (!driver || driver._closed) {
     // In a real app, connection details would come from environment variables
     // and you'd have more robust error handling and connection management.
+    console.log(`[Neo4jDriver] Connecting to Neo4j at ${NEO4J_URI} with user ${NEO4J_USER} and database ${NEO4J_DATABASE}`);
     driver = neo4j.driver(
       NEO4J_URI,
       neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD)

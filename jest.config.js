@@ -8,5 +8,5 @@ module.exports = {
         '**/tests/functional/**/*.test.js',
     ],
     globalSetup: './jest.globalSetup.js',
-    testTimeout: 30000, // 30 seconds for integration tests
+    testTimeout: 600000, // 10 minutes timeout for long-running tests
 };

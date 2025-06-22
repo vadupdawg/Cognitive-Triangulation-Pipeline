@@ -146,8 +146,8 @@ class InMemoryBatchProcessor extends EventEmitter {
       await createTransaction(async (db) => {
         // Prepare bulk operations
         const insertResultStmt = await db.prepare(`
-          INSERT INTO analysis_results (work_item_id, file_id, file_path, absolute_file_path, llm_output, status)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO analysis_results (file_id, file_path, absolute_file_path, llm_output, status)
+          VALUES (?, ?, ?, ?, ?)
         `);
         
         const updateWorkQueueStmt = await db.prepare(`
@@ -156,7 +156,7 @@ class InMemoryBatchProcessor extends EventEmitter {
         
         // Execute all operations in the transaction
         for (const item of batch) {
-          await insertResultStmt.run(item.taskId, item.fileId, item.filePath, item.absoluteFilePath, item.llmOutput, item.status);
+          await insertResultStmt.run(item.fileId, item.filePath, item.absoluteFilePath, item.llmOutput, item.status);
           await updateWorkQueueStmt.run(item.taskId);
         }
         
@@ -270,6 +270,35 @@ class InMemoryBatchProcessor extends EventEmitter {
       batchesProcessed: this.stats.batchesProcessed,
       averageBatchSize: this.stats.averageBatchSize
     };
+  }
+
+  /**
+   * Resets the batch processor to initial state (for fresh pipeline runs)
+   */
+  async reset() {
+    console.log('Resetting in-memory batch processor...');
+    
+    // Clear timer
+    if (this.batchTimer) {
+      clearInterval(this.batchTimer);
+      this.batchTimer = null;
+    }
+    
+    // Force flush remaining buffers
+    await this.forceFlush();
+    
+    // Reset all state
+    this.analysisResultBuffer = [];
+    this.failedWorkBuffer = [];
+    this.isProcessing = false;
+    this.stats = {
+      totalProcessed: 0,
+      totalFailed: 0,
+      batchesProcessed: 0,
+      averageBatchSize: 0
+    };
+    
+    console.log('In-memory batch processor reset complete');
   }
 
   /**

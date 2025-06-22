@@ -4,13 +4,13 @@ class GraphIngestorAgent {
     /**
      * Initializes the agent with database connections.
      * @param {object} db - An instance of the SQLite database connection client.
-     * @param {neo4j.Driver} neo4jDriver - An instance of the Neo4j driver.
+     * @param {object} neo4jDriverModule - The neo4j driver module with configured session method.
      */
-    constructor(db, neo4jDriver) {
+    constructor(db, neo4jDriverModule) {
         this.db = db;
-        this.neo4jDriver = neo4jDriver;
-        this.ALLOWED_NODE_LABELS = new Set(['Function', 'Variable', 'File', 'Class', 'Method']);
-        this.ALLOWED_RELATIONSHIP_TYPES = new Set(['CALLS', 'USES', 'CONTAINS', 'DEFINES']);
+        this.neo4jDriverModule = neo4jDriverModule;
+        this.ALLOWED_NODE_LABELS = new Set(['Function', 'Variable', 'File', 'Class', 'Method', 'Database', 'Table', 'View']);
+        this.ALLOWED_RELATIONSHIP_TYPES = new Set(['CALLS', 'USES', 'CONTAINS', 'DEFINES', 'IMPORTS', 'EXPORTS', 'EXTENDS']);
     }
 
     /**
@@ -18,42 +18,36 @@ class GraphIngestorAgent {
      * @param {number} batchSize - The number of results to process in each batch.
      */
     async run(batchSize = 100) {
+        console.log('[GraphIngestorAgent] Starting graph ingestion process...');
+        let totalProcessed = 0;
         while (true) {
             const results = await this.getNextBatch(batchSize);
+            console.log(`[GraphIngestorAgent] Retrieved ${results.length} results for processing`);
             if (results.length === 0) {
+                console.log('[GraphIngestorAgent] No more results to process');
                 break;
             }
             await this.processBatch(results);
+            totalProcessed += results.length;
+            console.log(`[GraphIngestorAgent] Processed batch of ${results.length} results (total: ${totalProcessed})`);
         }
+        console.log(`[GraphIngestorAgent] Completed processing ${totalProcessed} total results`);
     }
 
     /**
-     * Fetches a batch of unprocessed analysis results and marks them as 'ingested'.
+     * Fetches a batch of completed analysis results for ingestion.
      * @param {number} batchSize - The maximum number of results to fetch.
      * @returns {Promise<Array<Object>>} A promise that resolves to an array of analysis results.
      */
     async getNextBatch(batchSize) {
         try {
-            await this.db.run('BEGIN');
             const results = await this.db.all(
                 `SELECT id, llm_output, absolute_file_path as file_path FROM analysis_results WHERE status = ? LIMIT ?`,
                 'completed',
                 batchSize
             );
-
-            if (results.length > 0) {
-                const ids = results.map(r => r.id);
-                const placeholders = ids.map(() => '?').join(',');
-                await this.db.run(
-                    `UPDATE analysis_results SET status = ? WHERE id IN (${placeholders})`,
-                    'ingested',
-                    ...ids
-                );
-            }
-            await this.db.run('COMMIT');
             return results;
         } catch (error) {
-            await this.db.run('ROLLBACK');
             console.error('Failed to get next batch:', error);
             throw error;
         }
@@ -64,15 +58,27 @@ class GraphIngestorAgent {
      * @param {Array<Object>} results - The batch of analysis results from the database.
      */
     async processBatch(results) {
-        const session = this.neo4jDriver.session();
+        const session = this.neo4jDriverModule.session();
         const transaction = session.beginTransaction();
+        const processedIds = [];
+        
         try {
             const allEntities = [];
             const allRelationships = [];
 
             for (const result of results) {
                 try {
+                    console.log(`[GraphIngestorAgent] Processing result ID ${result.id} for file: ${result.file_path}`);
+                    console.log(`[GraphIngestorAgent] LLM output sample: ${result.llm_output.substring(0, 200)}...`);
+                    
                     const data = JSON.parse(result.llm_output);
+                    console.log(`[GraphIngestorAgent] Parsed data structure:`, {
+                        hasEntities: !!data.entities,
+                        entitiesCount: data.entities ? data.entities.length : 0,
+                        hasRelationships: !!data.relationships,
+                        relationshipsCount: data.relationships ? data.relationships.length : 0
+                    });
+                    
                     if (!data.entities || !data.relationships) {
                         throw new Error("Invalid result format: missing entities or relationships array.");
                     }
@@ -84,29 +90,38 @@ class GraphIngestorAgent {
                         if (r.to) r.to.filePath = r.to.filePath || result.file_path;
                     });
 
+                    console.log(`[GraphIngestorAgent] Adding ${data.entities.length} entities and ${data.relationships.length} relationships from result ${result.id}`);
                     allEntities.push(...data.entities);
                     allRelationships.push(...data.relationships);
+                    processedIds.push(result.id);
                 } catch (error) {
-                    console.error(`Error parsing result ID ${result.id}:`, error.message);
-                    const updateStmt = "UPDATE analysis_results SET status = ?, validation_errors = ? WHERE id = ?";
-                    // This update should be handled carefully, as it's outside the main db transaction.
-                    // For simplicity, we run it immediately. A more robust solution might queue these updates.
-                    await this.db.run(updateStmt, 'failed', error.message, result.id);
+                    console.error(`[GraphIngestorAgent] Error parsing result ID ${result.id}:`, error.message);
+                    console.error(`[GraphIngestorAgent] Raw LLM output for failed result:`, result.llm_output);
+                    // Skip this result and continue processing others
                 }
             }
 
+            console.log(`[GraphIngestorAgent] Total entities to create: ${allEntities.length}`);
+            console.log(`[GraphIngestorAgent] Total relationships to create: ${allRelationships.length}`);
+
+            console.log(`[GraphIngestorAgent] Creating nodes in batch...`);
             await this.createNodesInBatch(transaction, allEntities);
+            console.log(`[GraphIngestorAgent] Creating relationships in batch...`);
             await this.createRelationshipsInBatch(transaction, allRelationships);
 
+            console.log(`[GraphIngestorAgent] Committing Neo4j transaction...`);
             await transaction.commit();
+            console.log(`[GraphIngestorAgent] Neo4j transaction committed successfully`);
+            
+            // After successful Neo4j ingestion, delete the processed results from SQLite
+            if (processedIds.length > 0) {
+                const placeholders = processedIds.map(() => '?').join(',');
+                await this.db.run(`DELETE FROM analysis_results WHERE id IN (${placeholders})`, processedIds);
+            }
         } catch (error) {
             console.error(`Error processing batch:`, error.message);
             await transaction.rollback();
-            // Decide on a strategy for the batch, e.g., mark all as failed
-            const ids = results.map(r => r.id);
-            const placeholders = ids.map(() => '?').join(',');
-            const updateStmt = `UPDATE analysis_results SET status = ?, validation_errors = ? WHERE id IN (${placeholders})`;
-            await this.db.run(updateStmt, 'failed', `Batch processing error: ${error.message}`, ...ids);
+            throw error; // Re-throw to stop processing if there's a critical error
         } finally {
             await session.close();
         }
@@ -118,19 +133,25 @@ class GraphIngestorAgent {
      * @param {Array<Object>} entities - A list of entities to create as nodes.
      */
     async createNodesInBatch(transaction, entities) {
+        console.log(`[GraphIngestorAgent] createNodesInBatch called with ${entities.length} entities`);
+        
         const validEntities = entities.filter(entity => {
             if (!entity || !entity.type || !entity.name || !entity.filePath) {
-                console.warn("Invalid entity for createNode:", entity);
+                console.warn("[GraphIngestorAgent] Invalid entity for createNode:", entity);
                 return false;
             }
             if (!this.ALLOWED_NODE_LABELS.has(entity.type)) {
-                console.warn(`Attempted to create node with invalid label: ${entity.type}.`);
+                console.warn(`[GraphIngestorAgent] Attempted to create node with invalid label: ${entity.type}.`);
                 return false;
             }
             return true;
         });
 
-        if (validEntities.length === 0) return;
+        console.log(`[GraphIngestorAgent] ${validEntities.length} valid entities after filtering`);
+        if (validEntities.length === 0) {
+            console.log(`[GraphIngestorAgent] No valid entities to create, returning early`);
+            return;
+        }
 
         const entitiesByType = validEntities.reduce((acc, entity) => {
             if (!acc[entity.type]) {
