@@ -1,34 +1,29 @@
 # Key Research Questions
 
-This document outlines the central questions that will drive the research process, organized by the three main agents of the analysis pipeline.
+Based on the architectural failures detailed in the post-mortem report and the defined research scope, the following key questions must be answered to inform the design of a new, robust pipeline.
 
-## 1. Scout Agent (File Identification)
+## 1. Core Architecture and Data Flow
 
-*   What are the most effective and reliable methods for discovering all relevant source code files in a polyglot codebase (JavaScript, Python, Java) without relying on a predefined list?
-*   How can we distinguish source files from documentation, configuration, test assets, and other non-essential files?
-*   What strategies can be used to interpret project configuration files (e.g., `package.json`, `pom.xml`, `requirements.txt`) to inform the file discovery process?
-*   Are there AI-based approaches that can learn to identify source code files based on their content and structure, rather than just file extensions?
+*   What are the primary trade-offs between a pure message queuing system (like RabbitMQ) and a streaming platform (like Apache Kafka) for this specific use case?
+*   How can the "Pipes and Filters" architectural pattern be implemented to create a decoupled pipeline of `Scout`, `Worker`, and `Ingestor` agents?
+*   What are the best practices for ensuring data durability and exactly-once processing semantics in a distributed pipeline?
+*   Which architectural patterns are most effective for implementing back-pressure to prevent system overload?
 
-## 2. Worker Agent (AST-less Code Analysis)
+## 2. File and Data Streaming (`WorkerAgent` Focus)
 
-*   What are the leading AI/ML models (e.g., Large Language Models, Graph Neural Networks) for parsing entities and relationships from raw source code text?
-*   What are the most effective prompting strategies or fine-tuning methodologies for instructing an LLM to act as a "code parser" for multiple languages?
-*   How can an AI model reliably identify the following entities from raw text:
-    *   Functions / Methods (including signatures and decorators)
-    *   Classes (including inheritance and interface implementation)
-    *   Variables (global, local, and class-level)
-    *   Imports / Requires / Package inclusions
-*   What techniques can be used to accurately extract relationships between these entities, such as:
-    *   Function `A` calls Function `B`.
-    *   Class `X` inherits from Class `Y`.
-    *   File `F1` imports Module `M2`.
-    *   Function `C` uses Variable `V`.
-*   How can we handle cross-file and cross-language dependencies and relationships without a global AST?
-*   What are the best methods for ensuring the accuracy and consistency of the extracted data, and how can we validate it?
+*   What are the most efficient Node.js patterns for reading a file as a stream and processing it in chunks?
+*   How can we stream data to an LLM API that may not natively support streaming requests? What are the trade-offs of intermediate strategies like chunking or temporary file storage?
+*   What are the industry-standard data formats (e.g., Avro, Protocol Buffers) for serializing data between services, and what are their benefits over plain JSON?
 
-## 3. Ingestor Agent (Neo4j Transformation)
+## 3. Queuing and Messaging
 
-*   What is the optimal Neo4j graph schema (nodes, relationships, properties) for representing a polyglot codebase to support flexible and powerful queries?
-*   What are the most efficient and scalable patterns for transforming JSON or other semi-structured data from the Worker Agents into Cypher queries for Neo4j?
-*   How can we ensure idempotent ingestion, so that re-running the pipeline on the same code does not create duplicate nodes or relationships?
-*   What are the best practices for using transactions and batching to ensure data integrity and high performance during the ingestion process into Neo4j?
+*   For a high-throughput scenario involving potentially millions of file discovery events, how do Kafka, RabbitMQ, and cloud-native services (SQS, Pub/Sub) compare in terms of performance, scalability, and ease of management?
+*   How should a Dead-Letter Queue (DLQ) be implemented and monitored to handle and analyze messages that fail processing repeatedly?
+*   What message queue features are critical for this pipeline (e.g., message ordering, priority queues, delayed messages)?
+
+## 4. Scalability, Resilience, and Operations
+
+*   How can the new architecture be designed for horizontal scalability, allowing us to add more `Worker` or `Ingestor` instances as load increases?
+*   What are the best practices for health checks and monitoring in a streaming architecture?
+*   How can we design the `GraphIngestorAgent` to be idempotent, ensuring that re-processing a message does not lead to duplicate nodes or relationships in Neo4j?
+*   What are the potential pitfalls and common anti-patterns to avoid when building streaming data pipelines?

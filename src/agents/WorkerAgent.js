@@ -42,7 +42,7 @@ class WorkerAgent {
 
     // Get the task that was just claimed by this worker (most recent)
     const task = await this.db.get(
-        `SELECT id, file_path, content_hash
+        `SELECT id, file_id, file_path, content_hash
          FROM work_queue
          WHERE worker_id = ? AND status = 'processing'
          ORDER BY id DESC
@@ -64,7 +64,7 @@ class WorkerAgent {
     }
 
     return await this.db.get(
-        'SELECT id, file_path, content_hash FROM work_queue WHERE id = ?',
+        'SELECT id, file_id, file_path, content_hash FROM work_queue WHERE id = ?',
         [taskId]
     );
   }
@@ -75,7 +75,7 @@ class WorkerAgent {
       
       // VULN-001: Path Traversal Fix
       const safeTargetDirectory = path.resolve(this.targetDirectory || '.');
-      const intendedFilePath = path.resolve(safeTargetDirectory, task.file_path);
+      const intendedFilePath = path.resolve(task.file_path);
 
       if (!intendedFilePath.startsWith(safeTargetDirectory + path.sep)) {
           const errorMessage = `Path traversal attempt detected for file path: ${task.file_path}`;
@@ -98,7 +98,7 @@ class WorkerAgent {
              const fileContent = await fs.readFile(absoluteFilePath, 'utf-8');
       // Let the LLM read and analyze the file directly
       console.log(`[WorkerAgent] Creating guardrail prompt...`);
-      const prompt = this.validator.createGuardrailPrompt(fileContent);
+      const prompt = this.validator.createGuardrailPrompt(absoluteFilePath, fileContent);
       console.log(`[WorkerAgent] Prompt created successfully`);
       
       console.log(`[WorkerAgent] Calling LLM with retries...`);
@@ -106,7 +106,7 @@ class WorkerAgent {
       console.log(`[WorkerAgent] LLM analysis completed`);
       
       // Queue the result for batch processing instead of immediate database write
-      await this._queueSuccessResult(task.id, task.file_path, absoluteFilePath, JSON.stringify(llmAnalysisResult));
+      await this._queueSuccessResult(task.id, task.file_id, task.file_path, absoluteFilePath, JSON.stringify(llmAnalysisResult));
       console.log(`[WorkerAgent] Success result queued for task ${task.id}`);
     } catch (error) {
       // VULN-002: Information Leakage Fix
@@ -153,11 +153,12 @@ class WorkerAgent {
     }
     throw new LlmCallFailedError(`LLM call failed after ${retries} attempts: ${lastError.message}`);
   }
-   async _queueSuccessResult(taskId, filePath, absoluteFilePath, rawJsonString) {
+   async _queueSuccessResult(taskId, fileId, filePath, absoluteFilePath, rawJsonString) {
     // The batch processor is designed to handle both storing the analysis result
     // and updating the work queue status in an optimized manner.
     await this.batchProcessor.queueAnalysisResult(
       taskId,
+      fileId,
       filePath,
       absoluteFilePath,
       rawJsonString
@@ -170,9 +171,9 @@ class WorkerAgent {
   }
 
   // Legacy methods for backward compatibility (now use batch processing)
-  async _saveSuccessResult(taskId, filePath, rawJsonString) {
+  async _saveSuccessResult(taskId, fileId, filePath, rawJsonString) {
     const absoluteFilePath = path.resolve(filePath);
-    await this._queueSuccessResult(taskId, filePath, absoluteFilePath, rawJsonString);
+    await this._queueSuccessResult(taskId, fileId, filePath, absoluteFilePath, rawJsonString);
   }
 
   async _handleProcessingFailure(taskId, errorMessage) {

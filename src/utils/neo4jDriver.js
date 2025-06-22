@@ -34,6 +34,7 @@ function getDriver() {
 
 // Export an object that always returns a fresh driver if needed
 module.exports = {
+  getNeo4jDriver: getDriver,
   session: (config = {}) => {
     // Always specify the database from environment variable
     const sessionConfig = { database: NEO4J_DATABASE, ...config };
@@ -45,6 +46,4 @@ module.exports = {
       return driver.close();
     }
   },
-  // For backward compatibility, allow direct access to driver methods
-  getDriver: () => getDriver()
 };

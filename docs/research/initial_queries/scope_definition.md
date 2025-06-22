@@ -1,27 +1,31 @@
 # Research Scope Definition
 
-## 1. Primary Focus
+This research will focus on identifying, evaluating, and recommending a scalable, resilient, and streaming-based architecture for a high-performance code analysis pipeline. The scope is driven by the critical failures identified in the post-mortem report, specifically addressing the challenges of memory-intensiveness, inadequate queuing, and lack of data flow control.
 
-This research focuses on identifying and evaluating AI-native techniques for source code analysis directly from raw text, without the use of Abstract Syntax Trees (ASTs) or traditional parsing methods. The primary goal is to inform the development of a three-stage pipeline for building a code knowledge graph.
+The primary areas of investigation are:
 
-## 2. Core Research Areas
+1.  **Streaming Data Ingestion and Processing:**
+    *   Techniques for processing large files without loading them entirely into memory.
+    *   Evaluation of Node.js stream capabilities for I/O operations.
+    *   Strategies for handling data chunks and streaming them to external APIs (e.g., LLMs).
 
-The research will be structured around the three agents defined in the project vision:
+2.  **Dedicated Message Brokers vs. Streaming Platforms:**
+    *   In-depth comparison of message queues like **Apache Kafka** and **RabbitMQ**.
+    *   Analysis of cloud-native solutions such as **AWS SQS** and **Google Pub/Sub**.
+    *   Evaluation of integrated streaming platforms like **Apache Flink** and **Apache Spark Streaming** for more complex processing needs.
+    *   Key criteria will include durability, ordering guarantees, throughput, latency, scalability, and operational complexity.
 
-*   **Scout Agent:** Investigate robust methods for identifying all relevant source code files in a polyglot repository, covering JavaScript, Python, and Java. This includes strategies for handling various file extensions, configuration files, and build scripts that might define the project structure.
-*   **Worker Agent:** Explore and evaluate state-of-the-art, AI-driven techniques for extracting code entities (e.g., functions, classes, variables) and their relationships (e.g., calls, inheritance, imports) from plain text. This is the core of the research and must explicitly avoid AST-based approaches.
-*   **Ingestor Agent:** Research best practices for transforming the semi-structured data extracted by the Worker Agents into a format suitable for ingestion into a Neo4j database. This includes schema design considerations, data mapping strategies, and efficient batching techniques to ensure data integrity and performance.
+3.  **Back-Pressure and Flow Control:**
+    *   Investigation of built-in back-pressure mechanisms within stream processing frameworks.
+    *   Architectural patterns for implementing back-pressure in systems using message brokers to ensure stability under variable load.
 
-## 3. In-Scope Languages
+4.  **Resilient Data Handling and Error Management:**
+    *   Best practices for data schema validation (e.g., using Avro, Protobuf) across distributed components.
+    *   Designing robust error-handling pathways, including the use of Dead-Letter Queues (DLQs) for failed message processing.
+    *   Strategies for idempotent data ingestion into the graph database to prevent data duplication during retries.
 
-The research will specifically target the following languages:
-*   JavaScript (including common variants like JSX)
-*   Python
-*   Java
+5.  **Architectural Patterns:**
+    *   Analysis of the **Pipes and Filters** pattern for creating a decoupled and maintainable pipeline.
+    *   Exploration of **Event Sourcing** or **Change Data Capture (CDC)** as potential patterns for ensuring data consistency and auditability.
 
-## 4. Out of Scope
-
-As per the `constraints_and_anti_goals.md` document, the following topics are explicitly out of scope:
-*   Code quality, performance, or security analysis.
-*   Automated code refactoring or modification.
-*   Real-time analysis or visualization.
+The final output will be a set of actionable recommendations for a new architecture that directly remedies the flaws of the previous system and provides a solid foundation for future scalability.

@@ -1,24 +1,16 @@
 # Executive Summary
 
-This report details the findings of an initial research phase into AI-driven, text-based source code analysis for polyglot codebases (JavaScript, Python, and Java). The primary objective was to identify actionable strategies for implementing a three-stage analysis pipeline (Scout, Worker, Ingestor) without the use of traditional parsers or Abstract Syntax Trees (ASTs), with a focus on achieving 100% accuracy in the final knowledge graph.
+This research was commissioned to address the catastrophic architectural failure of the code analysis pipeline, as detailed in the post-mortem report dated 2025-06-22. The previous system's design, which relied on in-memory file processing and a relational database as a makeshift queue, was fundamentally non-scalable, memory-intensive, and brittle. It was incapable of handling the demands of a real-world, large-scale codebase.
 
-## Key Findings
+This report presents the findings of a deep, structured research effort into modern, streaming-based architectures. The research process involved analyzing the initial failure, identifying key technological pillars, and performing targeted research cycles to fill critical implementation knowledge gaps.
 
-1.  **A Hybrid, Multi-Pass Approach is Essential:** A recurring pattern in the research is that a purely AI-based or purely rule-based system is insufficient. The most effective approach is a hybrid one.
-    *   **Scout Agent:** A multi-pass system combining fast, rule-based file filtering with slower, more accurate AI-based classification for edge cases is recommended.
-    *   **Worker Agent:** The core challenge lies in the tension between the "no AST" constraint and the "100% accuracy" requirement. The research indicates that a simple "prompt-and-parse" approach with a general-purpose LLM will not work due to the "noisy" and non-deterministic nature of LLMs.
-    *   **Ingestor Agent:** The data ingestion process is a standard ETL (Extract, Transform, Load) problem where established best practices for batching and idempotent operations in Neo4j are directly applicable.
+The primary findings of this research are threefold:
+1.  **A Streaming Backbone is Essential:** The use of a distributed, persistent log like **Apache Kafka** is the correct foundation for the pipeline, replacing the inadequate SQLite queue and providing durability, scalability, and natural back-pressure.
+2.  **File Processing Must Be Streamed:** The practice of reading entire files into memory must be abandoned. The use of **Node.js Streams** (`fs.createReadStream`) is a non-negotiable requirement for all file I/O to ensure low, predictable memory usage.
+3.  **Advanced Processing Requires a Dedicated Framework:** For complex, stateful data transformations and resilient ingestion, a dedicated stream processing framework like **Apache Flink** is recommended over custom, brittle consumer logic.
 
-2.  **Fine-Tuning is Non-Negotiable for Accuracy:** To meet the project's accuracy goals, fine-tuning an LLM for the specific task of code analysis in each target language is not an optional optimization—it is a mandatory requirement.
+Based on these findings, this report recommends a new, fundamentally different architecture: a **decoupled, event-driven pipeline**. In this model, agents communicate asynchronously by producing and consuming events from Kafka topics. This design is inherently more resilient, scalable, and maintainable.
 
-3.  **The Criticality of a Verification Layer:** Given the inherent unreliability of LLMs, a "verification and validation" layer for the output of the Worker Agent is the most critical and least-understood component of the proposed system.
+While this research has established a robust high-level architecture, several specific implementation questions have been identified and documented in the `knowledge_gaps.md` file. These questions, covering areas like Kafka topic configuration and Flink-to-Node.js integration, should be the focus of the next phase of work leading to detailed technical specifications.
 
-## Primary Recommendations
-
-1.  **Adopt a Three-Stage, Multi-Pass Pipeline:** The architecture should follow the integrated model of a Scout, Worker, and Ingestor agent, with the Ingestor implementing a two-pass logic to handle cross-file dependencies.
-2.  **Prioritize the Development of a Fine-Tuning and Verification Strategy:** The project's success hinges on the ability of the Worker Agent to produce accurate data. The immediate focus of the next phase of work should be on the practical implementation of a fine-tuning pipeline and the research of a robust verification mechanism.
-3.  **Begin with a Single Language:** The complexity of building a polyglot system should be managed by developing the end-to-end pipeline for a single language first before scaling to others.
-
-## Next Steps: Targeted Research
-
-This initial research phase has successfully defined a high-level model for the pipeline. However, it has also revealed significant knowledge gaps. The next step is to conduct a targeted research cycle focused on the most critical of these gaps: **achieving 100% accuracy from a non-deterministic system.** This will involve a deep dive into LLM validation techniques, multi-agent "critic" systems, and the practicalities of building a high-quality, annotated dataset for fine-tuning.
+Adopting the recommendations in this report will mitigate the risks that led to the previous failure and provide a solid architectural foundation for a high-performance, scalable code analysis system.

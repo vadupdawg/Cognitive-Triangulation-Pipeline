@@ -54,6 +54,9 @@ class ScoutAgent {
                     allFiles = allFiles.concat(subFiles);
                 }
             } else if (item.isFile()) {
+                if (item.name.toLowerCase() === 'readme.md') {
+                    continue;
+                }
                 const language = this.detectLanguage(fullPath);
                 if (language !== 'unknown') {
                     const content = await fsp.readFile(fullPath);
@@ -104,13 +107,18 @@ class ScoutAgent {
         await this.db.run('BEGIN TRANSACTION');
         try {
             for (const file of files) {
+                let fileId;
                 const existingFile = await this.db.get('SELECT id, checksum FROM files WHERE file_path = ?', file.filePath);
                 if (existingFile) {
+                    fileId = existingFile.id;
                     if (existingFile.checksum !== file.checksum) {
-                        await this.db.run('UPDATE files SET checksum = ?, updated_at = CURRENT_TIMESTAMP, status = "pending" WHERE id = ?', file.checksum, existingFile.id);
+                        await this.db.run('UPDATE files SET checksum = ?, updated_at = CURRENT_TIMESTAMP, status = "pending" WHERE id = ?', file.checksum, fileId);
+                        await this.db.run('INSERT INTO work_queue (file_id, file_path, content_hash, status) VALUES (?, ?, ?, ?)', fileId, file.filePath, file.checksum, 'pending');
                     }
                 } else {
-                    await this.db.run('INSERT INTO files (file_path, language, checksum, status) VALUES (?, ?, ?, ?)', file.filePath, file.language, file.checksum, 'pending');
+                    const result = await this.db.run('INSERT INTO files (file_path, language, checksum, status) VALUES (?, ?, ?, ?)', file.filePath, file.language, file.checksum, 'pending');
+                    fileId = result.lastID;
+                    await this.db.run('INSERT INTO work_queue (file_id, file_path, content_hash, status) VALUES (?, ?, ?, ?)', fileId, file.filePath, file.checksum, 'pending');
                 }
             }
             await this.db.run('COMMIT');

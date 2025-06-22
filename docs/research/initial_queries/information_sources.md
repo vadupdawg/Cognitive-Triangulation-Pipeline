@@ -1,25 +1,38 @@
 # Potential Information Sources
 
-This document lists the potential sources of information that will be consulted during the research process.
+To answer the key research questions, information will be gathered from a variety of reputable sources. The primary research tool will be a general AI search tool, which will be directed to query the following types of resources.
 
-## 1. Primary Information Source
+## 1. Official Documentation
 
-*   **General AI Search (via MCP Tool):** A general-purpose AI search tool will be the primary resource for this research. It will be used to query academic papers, technical blogs, conference proceedings, and official documentation related to AI, code analysis, and graph databases.
+*   **Apache Kafka:** Official documentation for architecture, core concepts (topics, partitions, producers, consumers), Kafka Streams, and Kafka Connect.
+*   **RabbitMQ:** Official documentation for AMQP protocol, exchanges, queues, bindings, and tutorials on common messaging patterns.
+*   **Apache Flink:** Official documentation for the DataStream API, state management, and concepts of back-pressure.
+*   **Apache Spark:** Official documentation for Spark Streaming and Structured Streaming.
+*   **Node.js:** Official API documentation for the `stream` module.
+*   **Cloud Provider Documentation (AWS, Google Cloud, Azure):** Documentation for managed services like SQS, Kinesis, Pub/Sub, and Event Hubs.
 
-## 2. Academic and Research Databases
+## 2. Technical Blogs and Engineering Publications
 
-*   **arXiv:** For pre-print articles on the latest research in natural language processing (NLP), machine learning on code, and graph neural networks.
-*   **Google Scholar:** To find peer-reviewed papers and articles from a wide range of academic publishers.
-*   **ACM Digital Library & IEEE Xplore:** For high-quality research papers from leading computer science conferences and journals.
+*   **Confluent Blog:** In-depth articles on Apache Kafka, event-driven architectures, and stream processing.
+*   **Netflix Technology Blog:** Articles on their large-scale data processing and streaming infrastructure.
+*   **Uber Engineering Blog:** Posts detailing their use of streaming platforms for real-time analytics and data pipelines.
+*   **Martin Fowler's Blog:** Foundational articles on software architecture, event-driven systems, and related patterns.
+*   **InfoQ:** Articles, presentations, and interviews on software architecture and data engineering topics.
 
-## 3. Technical Blogs and Industry Publications
+## 3. Academic Papers and Conference Proceedings
 
-*   **AI and ML Publications:** Blogs from companies like Google AI, Meta AI, OpenAI, and Hugging Face.
-*   **Data Engineering Blogs:** Publications from companies like Neo4j, Databricks, and Confluent for insights into data ingestion and graph modeling.
-*   **Medium and Towards Data Science:** For articles and tutorials from individual researchers and practitioners.
+*   Searches on **ACM Digital Library** and **IEEE Xplore** for peer-reviewed papers on distributed systems, stream processing, and data-intensive applications.
+*   Proceedings from conferences like **VLDB**, **SIGMOD**, and **Strata Data Conference**.
 
-## 4. Open Source Projects and Documentation
+## 4. Books and Publications
 
-*   **Source Code of Analysis Tools:** Examining the source code of existing code analysis and intelligence platforms (e.g., Sourcegraph, CodeQL, Semantic) to understand their approaches, even if they use traditional methods, can provide valuable context.
-*   **LLM and NLP Library Documentation:** Documentation for libraries like Hugging Face Transformers, LangChain, and others will be consulted for implementation details.
-*   **Neo4j Documentation:** The official Neo4j documentation will be the definitive source for schema design, Cypher query optimization, and data import best practices.
+*   "Designing Data-Intensive Applications" by Martin Kleppmann.
+*   "Kafka: The Definitive Guide" by Neha Narkhede, Gwen Shapira, and Todd Palino.
+*   "I Heart Logs: Event Data, Stream Processing, and Data Integration" by Jay Kreps.
+
+## 5. Community and Forum Discussions
+
+*   **Stack Overflow:** Targeted searches for common problems and solutions related to the technologies under investigation.
+*   **Reddit (e.g., r/dataengineering, r/node):** Community discussions and real-world experiences.
+
+These sources will be used to build a comprehensive understanding of the problem space and to formulate well-supported recommendations.

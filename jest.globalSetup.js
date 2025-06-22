@@ -1,7 +1,7 @@
-const { getDb } = require('./src/utils/sqliteDb');
+const { initializeDb } = require('./src/utils/sqliteDb');
 
 module.exports = async () => {
-  console.log('Global setup: Warming up database connection...');
-  await getDb();
-  console.log('Global setup: Database connection is ready.');
+  console.log('Global setup: Initializing database schema...');
+  await initializeDb();
+  console.log('Global setup: Database schema is ready.');
 };

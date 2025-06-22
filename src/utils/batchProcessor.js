@@ -50,7 +50,7 @@ class InMemoryBatchProcessor extends EventEmitter {
   /**
    * Adds an analysis result to the processing queue
    */
-  async queueAnalysisResult(taskId, filePath, absoluteFilePath, llmOutput) {
+  async queueAnalysisResult(taskId, fileId, filePath, absoluteFilePath, llmOutput) {
     // Check queue size to prevent memory overflow
     if (this.analysisResultBuffer.length >= this.MAX_QUEUE_SIZE) {
       console.warn('Analysis result queue full, forcing flush...');
@@ -59,6 +59,7 @@ class InMemoryBatchProcessor extends EventEmitter {
     
     this.analysisResultBuffer.push({
       taskId,
+      fileId,
       filePath,
       absoluteFilePath,
       llmOutput,
@@ -145,8 +146,8 @@ class InMemoryBatchProcessor extends EventEmitter {
       await createTransaction(async (db) => {
         // Prepare bulk operations
         const insertResultStmt = await db.prepare(`
-          INSERT INTO analysis_results (work_item_id, file_path, absolute_file_path, llm_output, status) 
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO analysis_results (work_item_id, file_id, file_path, absolute_file_path, llm_output, status)
+          VALUES (?, ?, ?, ?, ?, ?)
         `);
         
         const updateWorkQueueStmt = await db.prepare(`
@@ -155,7 +156,7 @@ class InMemoryBatchProcessor extends EventEmitter {
         
         // Execute all operations in the transaction
         for (const item of batch) {
-          await insertResultStmt.run(item.taskId, item.filePath, item.absoluteFilePath, item.llmOutput, item.status);
+          await insertResultStmt.run(item.taskId, item.fileId, item.filePath, item.absoluteFilePath, item.llmOutput, item.status);
           await updateWorkQueueStmt.run(item.taskId);
         }
         

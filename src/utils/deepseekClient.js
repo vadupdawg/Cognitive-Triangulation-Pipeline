@@ -69,4 +69,16 @@ class DeepSeekClient {
     }
 }
 
-module.exports = DeepSeekClient; 
+let clientInstance;
+
+function getDeepseekClient() {
+    if (!clientInstance) {
+        clientInstance = new DeepSeekClient();
+    }
+    return clientInstance;
+}
+
+module.exports = {
+    getDeepseekClient,
+    DeepSeekClient,
+};
