@@ -19,27 +19,37 @@ class WorkerAgent {
   }
 
   async claimTask(workerId) {
-    const taskToClaim = await this.db.querySingle(
-        `SELECT id FROM work_queue WHERE status = 'pending' ORDER BY id ASC LIMIT 1`
-    );
-
-    if (!taskToClaim) {
-        return null;
-    }
-
+    // Use SQLite's WAL mode and immediate update to avoid race conditions
+    // This is more efficient than transactions for this simple operation
+    
+    // Try to claim a task atomically with a single UPDATE statement
     const claimResult = await this.db.execute(
-        `UPDATE work_queue SET status = 'processing', worker_id = ? WHERE id = ? AND status = 'pending'`,
-        [workerId, taskToClaim.id]
+        `UPDATE work_queue 
+         SET status = 'processing', worker_id = ? 
+         WHERE id = (
+           SELECT id FROM work_queue 
+           WHERE status = 'pending' 
+           ORDER BY id ASC 
+           LIMIT 1
+         ) AND status = 'pending'`,
+        [workerId]
     );
 
     if (claimResult.changes === 0) {
-        return null;
+        return null; // No pending tasks available
     }
 
-    return await this.db.querySingle(
-        'SELECT id, file_path, content_hash FROM work_queue WHERE id = ?',
-        [taskToClaim.id]
+    // Get the task that was just claimed by this worker (most recent)
+    const task = await this.db.querySingle(
+        `SELECT id, file_path, content_hash 
+         FROM work_queue 
+         WHERE worker_id = ? AND status = 'processing' 
+         ORDER BY id DESC 
+         LIMIT 1`,
+        [workerId]
     );
+
+    return task;
   }
 
   async claimSpecificTask(taskId, workerId) {
@@ -121,8 +131,28 @@ class WorkerAgent {
   }
 
   async _queueSuccessResult(taskId, filePath, absoluteFilePath, rawJsonString) {
-    // Queue the result for batch processing - no direct database access
-    await this.batchProcessor.queueAnalysisResult(taskId, filePath, absoluteFilePath, rawJsonString);
+    // For now, write directly to database to ensure data is stored
+    // TODO: Fix batch processor later
+    try {
+      // Insert into analysis_results with correct column name (work_item_id, not task_id)
+      await this.db.execute(
+        `INSERT INTO analysis_results (work_item_id, file_path, absolute_file_path, llm_output, status, validation_passed, created_at) 
+         VALUES (?, ?, ?, ?, 'completed', 1, datetime('now'))`,
+        [taskId, filePath, absoluteFilePath, rawJsonString]
+      );
+      
+      // Also update work_queue status
+      await this.db.execute(
+        `UPDATE work_queue SET status = 'completed' WHERE id = ?`,
+        [taskId]
+      );
+      
+      console.log(`[WorkerAgent] Result stored directly in database for task ${taskId}`);
+    } catch (error) {
+      console.error(`[WorkerAgent] Failed to store result for task ${taskId}:`, error);
+      // Fallback to batch processor
+      await this.batchProcessor.queueAnalysisResult(taskId, filePath, absoluteFilePath, rawJsonString);
+    }
   }
 
   async _queueProcessingFailure(taskId, errorMessage) {

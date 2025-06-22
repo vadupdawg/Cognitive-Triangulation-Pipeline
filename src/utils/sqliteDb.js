@@ -173,7 +173,7 @@ async function beginTransaction() {
 async function commit() {
   const connection = await initConnection();
   await connection.exec('COMMIT');
-}
+    }
 
 async function rollback() {
   const connection = await initConnection();

@@ -314,6 +314,16 @@ Return only the JSON analysis, no additional text or formatting.`;
                 if (entity.qualifiedName !== expectedFilePath) {
                     throw new ValidationError(`Entity ${index}: File entity qualifiedName "${entity.qualifiedName}" must be the absolute file path "${expectedFilePath}"`);
                 }
+            } else if (entity.type === 'Database' || entity.type === 'Table') {
+                // Database and Table entities can use either:
+                // 1. "filePath--entityName" format (standard)
+                // 2. "databaseName--tableName" format (for cross-file references)
+                const hasFilePathPrefix = entity.qualifiedName.startsWith(expectedFilePath + '--');
+                const hasDatabasePrefix = entity.qualifiedName.includes('--') && !entity.qualifiedName.startsWith('/') && !entity.qualifiedName.startsWith('C:');
+                
+                if (!hasFilePathPrefix && !hasDatabasePrefix) {
+                    throw new ValidationError(`Entity ${index}: Database/Table qualifiedName "${entity.qualifiedName}" must either start with "${expectedFilePath}--" or use "databaseName--entityName" format`);
+                }
             } else {
                 // For all other entity types, qualifiedName must follow "filePath--entityName" format
                 if (!entity.qualifiedName.startsWith(expectedFilePath + '--')) {
