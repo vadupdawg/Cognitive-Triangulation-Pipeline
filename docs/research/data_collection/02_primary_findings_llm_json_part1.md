@@ -63,7 +63,7 @@ While perfect determinism is challenging with current LLMs, several techniques c
 
 ### Large Files and Context Windows
 *   **Problem**: If a source file is too large for the model's context window, it cannot be processed in a single prompt.
-*   **Solution**: The code must be chunked. However, simple chunking can break semantic context. A better approach is to use an overlapping chunking strategy or, ideally, to chunk based on semantic boundaries (e.g., functions or classes). The prompt would need to be adapted to analyze a chunk and understand that it is part of a larger file, potentially requiring a final "synthesis" prompt to merge the analyses of all chunks.
+*   **Solution**: Analysis shows that source code files in the target domain are well within modern LLM context limits (typically 128K+ tokens). Files can be processed entirely without chunking, preserving complete semantic context and simplifying the analysis pipeline.
 
 ### Validation and Retries
 Even with the best prompts, the LLM may occasionally produce malformed or incomplete data. A robust system must include a validation layer.

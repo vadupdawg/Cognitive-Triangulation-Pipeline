@@ -13,7 +13,6 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs').promises;
 const { spawn } = require('child_process');
-const ProductionAgentFactory = require('./productionAgentFactory');
 
 class PipelineApiService {
     constructor(port = 3002) {
@@ -215,7 +214,8 @@ class PipelineApiService {
     }
 
     async runParallelWorkers(pipelineId, targetDirectory, factory, totalTasks) {
-        const MAX_WORKERS = 50;
+        // Dramatically increase worker count with new batch processing system
+        const MAX_WORKERS = 200; // Increased from 50 to 200 workers
         let tasksProcessed = 0;
         
         // Get all pending tasks first
@@ -226,13 +226,22 @@ class PipelineApiService {
         if (allTasks.length === 0) {
             this.updatePipelineStatus(pipelineId, {
                 'progress.workerAgent.status': 'completed'
-            }, '✅ Phase 5 Complete: No tasks to process');
+            }, '✅ Phase 4 Complete: No tasks to process');
             return;
         }
         
+        // Initialize batch processor for high-concurrency operations
+        await factory.initializeBatchProcessor();
+        
         // Create one worker per task (up to MAX_WORKERS)
         const numWorkers = Math.min(MAX_WORKERS, allTasks.length);
-        this.updatePipelineStatus(pipelineId, {}, `🚀 Starting ${numWorkers} parallel workers for ${allTasks.length} files...`);
+        this.updatePipelineStatus(pipelineId, {}, `🚀 Starting ${numWorkers} high-performance parallel workers for ${allTasks.length} files...`);
+        
+        // Get batch processor stats for monitoring
+        const batchStats = await factory.getBatchStats();
+        if (batchStats) {
+            this.updatePipelineStatus(pipelineId, {}, `📊 Batch processing enabled: Redis queues active`);
+        }
         
         // Create worker function that processes a specific task
         const createWorker = async (workerId, task) => {
@@ -262,36 +271,56 @@ class PipelineApiService {
             }
         };
         
-        // Start all workers simultaneously, each with their assigned task
+        // Start all workers simultaneously with batch processing
         const workers = [];
-        for (let i = 0; i < numWorkers; i++) {
-            const task = allTasks[i];
-            workers.push(createWorker(i + 1, task));
-        }
         
-        // If we have more tasks than workers, handle remaining tasks
-        if (allTasks.length > numWorkers) {
-            this.updatePipelineStatus(pipelineId, {}, 
-                `⚠️ Note: ${allTasks.length - numWorkers} tasks will be processed after initial batch completes`);
+        // Process all tasks in batches to avoid overwhelming the system
+        const BATCH_SIZE = 50; // Process 50 workers at a time
+        for (let i = 0; i < allTasks.length; i += BATCH_SIZE) {
+            const batch = allTasks.slice(i, Math.min(i + BATCH_SIZE, allTasks.length));
+            const batchWorkers = batch.map((task, index) => 
+                createWorker(i + index + 1, task)
+            );
             
-            // Process remaining tasks after first batch
-            const remainingTasks = allTasks.slice(numWorkers);
-            for (const task of remainingTasks) {
-                workers.push(createWorker(workers.length + 1, task));
+            this.updatePipelineStatus(pipelineId, {}, 
+                `⚡ Processing batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.length} workers`);
+            
+            workers.push(...batchWorkers);
+            
+            // Small delay between batches to prevent overwhelming Redis/SQLite
+            if (i + BATCH_SIZE < allTasks.length) {
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
         }
         
         // Wait for all workers to complete
+        this.updatePipelineStatus(pipelineId, {}, 
+            `⏳ Waiting for ${workers.length} workers to complete processing...`);
+        
         await Promise.all(workers);
+        
+        // Wait for batch processor to finish writing all results
+        this.updatePipelineStatus(pipelineId, {}, 
+            `🔄 Finalizing batch writes to database...`);
+        
+        // Give batch processor time to flush all buffers
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Get final stats
+        const finalStats = await factory.getBatchStats();
+        if (finalStats) {
+            this.updatePipelineStatus(pipelineId, {}, 
+                `📊 Batch processing complete: ${finalStats.analysisResultBuffer + finalStats.failedWorkBuffer} items remaining in buffers`);
+        }
         
         this.updatePipelineStatus(pipelineId, {
             'progress.workerAgent.status': 'completed',
             'progress.workerAgent.currentFile': null
-        }, `✅ Phase 5 Complete: All ${allTasks.length} files processed in parallel`);
+        }, `✅ Phase 4 Complete: All ${allTasks.length} files processed with ${MAX_WORKERS} max parallel workers`);
     }
 
     async startPipelineAsync(pipelineId, targetDirectory) {
-        const factory = new ProductionAgentFactory();
+        const factory = require('./productionAgentFactory');
         
         const pipelineStatus = {
             pipelineId: pipelineId,
@@ -319,7 +348,7 @@ class PipelineApiService {
             }, '🗑️  Phase 1: Clearing databases for fresh start...');
             
             await factory.clearAllDatabases();
-            this.updatePipelineStatus(pipelineId, {}, '✅ Databases cleared successfully');
+            this.updatePipelineStatus(pipelineId, {}, '✅ Databases cleared and schema initialized');
             
             // Phase 2: Test connections
             this.updatePipelineStatus(pipelineId, {
@@ -332,19 +361,11 @@ class PipelineApiService {
             }
             this.updatePipelineStatus(pipelineId, {}, '✅ All connections verified');
             
-            // Phase 3: Initialize database
-            this.updatePipelineStatus(pipelineId, {
-                phase: 'initializing_database'
-            }, '📊 Phase 3: Initializing database schema...');
-            
-            await factory.initializeDatabase();
-            this.updatePipelineStatus(pipelineId, {}, '✅ Database schema initialized');
-            
-            // Phase 4: Run ScoutAgent
+            // Phase 3: Run ScoutAgent
             this.updatePipelineStatus(pipelineId, {
                 phase: 'scout_analysis',
                 'progress.scoutAgent.status': 'running'
-            }, `🔍 Phase 4: Starting repository scan of ${targetDirectory}...`);
+            }, `🔍 Phase 3: Starting repository scan of ${targetDirectory}...`);
             
             const scoutAgent = await factory.createScoutAgent(targetDirectory);
             await scoutAgent.run();
@@ -360,25 +381,26 @@ class PipelineApiService {
                 'progress.scoutAgent.filesFound': totalFiles[0].count,
                 'progress.scoutAgent.filesQueued': queuedFiles[0].count,
                 'progress.workerAgent.tasksTotal': queuedFiles[0].count
-            }, `✅ Phase 4 Complete: Found ${totalFiles[0].count} files, queued ${queuedFiles[0].count} for analysis`);
+            }, `✅ Phase 3 Complete: Found ${totalFiles[0].count} files, queued ${queuedFiles[0].count} for analysis`);
             
-            // Phase 5: Run WorkerAgent(s) in parallel
+            // Phase 4: Run WorkerAgent(s) in parallel
             this.updatePipelineStatus(pipelineId, {
                 phase: 'worker_analysis',
                 'progress.workerAgent.status': 'running'
-            }, `🤖 Phase 5: Starting parallel file analysis with up to 50 workers...`);
+            }, `🤖 Phase 4: Starting parallel file analysis with up to 50 workers...`);
             
             await this.runParallelWorkers(pipelineId, targetDirectory, factory, queuedFiles[0].count);
             
-            // Phase 6: Run GraphIngestorAgent
+            // Phase 5: Run GraphIngestorAgent
             this.updatePipelineStatus(pipelineId, {
                 phase: 'graph_ingestion',
                 'progress.graphIngestor.status': 'running'
-            }, '🔗 Phase 6: Starting graph database ingestion...');
+            }, '🔗 Phase 5: Starting graph database ingestion...');
             
             const db2 = await factory.getSqliteConnection();
-            const analysisBatch = await db2.all("SELECT * FROM analysis_results WHERE status = 'pending_ingestion'");
-            const refactoringBatch = await db2.all("SELECT * FROM refactoring_tasks WHERE status = 'pending'");
+            // Get ALL analysis results since databases are cleared at start of pipeline
+            const analysisBatch = await db2.all("SELECT * FROM analysis_results");
+            const refactoringBatch = await db2.all("SELECT * FROM refactoring_tasks");
             
             if (analysisBatch.length > 0 || refactoringBatch.length > 0) {
                 const { processBatch } = require('../agents/GraphIngestorAgent');
@@ -401,7 +423,7 @@ class PipelineApiService {
                 status: 'completed',
                 phase: 'completed',
                 endTime: new Date().toISOString()
-            }, '🎉 Pipeline completed successfully!');
+            }, '�� Pipeline completed successfully!');
             
         } catch (error) {
             console.error(`Pipeline ${pipelineId} failed:`, error);

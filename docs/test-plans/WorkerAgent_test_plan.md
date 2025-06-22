@@ -15,7 +15,7 @@ The primary goal of these tests is to verify the following AI-Verifiable End Res
 *   **Failure Handling (Dead-Letter Queue):** A task that persistently fails analysis (e.g., due to invalid LLM responses or file system errors) is moved to the `failed_work` table, and its status in the `work_queue` is updated to `'failed'`.
 *   **Data Integrity:** The `llm_output` stored in the `analysis_results` table is a valid, well-structured JSON string that conforms to the project's data contract.
 *   **System Resilience:** The agent demonstrates resilience by handling transient errors (e.g., LLM API errors, network issues) through a retry-with-backoff mechanism.
-*   **Large File Handling:** The agent can correctly process files that exceed the size threshold by chunking the content, analyzing each chunk, and aggregating the results.
+*   **File Processing:** The agent can correctly process files of any size by analyzing the full content with the LLM.
 
 ## 3. Test Strategy
 
@@ -33,12 +33,12 @@ Our testing approach will treat the `WorkerAgent` as a black box. We will not in
 
 A multi-layered regression strategy will be employed to ensure continuous stability as the codebase evolves. Tests will be tagged to allow for selective execution.
 
--   **Test Tags:** `unit`, `happy-path`, `error-handling`, `resilience`, `chunking`
+-   **Test Tags:** `unit`, `happy-path`, `error-handling`, `resilience`
 
 -   **Execution Triggers & Scopes:**
     -   **On-Commit (Pre-push hook):** Run all `unit` and `happy-path` tests. This provides a fast feedback loop for developers.
         -   *AI Verifiable Criterion:* The pre-commit hook script executes the test runner with the specified tags and passes.
-    -   **On Pull Request (CI Pipeline):** Run the entire test suite (`unit`, `happy-path`, `error-handling`, `resilience`, `chunking`). This ensures that no regressions are introduced into the main branch.
+    -   **On Pull Request (CI Pipeline):** Run the entire test suite (`unit`, `happy-path`, `error-handling`, `resilience`). This ensures that no regressions are introduced into the main branch.
         -   *AI Verifiable Criterion:* The CI pipeline configuration file shows the test command being executed without tag restrictions, and the build succeeds.
     -   **Before Release (Staging Deployment):** Run the entire test suite against a staging environment that may include semi-integrated components. This is a final quality gate.
         -   *AI Verifiable Criterion:* Release management documentation confirms the execution of the full test suite as a release checklist item.
@@ -144,24 +144,15 @@ A multi-layered regression strategy will be employed to ensure continuous stabil
     -   **Expected Outcome:** `validateLlmResponse` throws `InvalidJsonResponseError` on each attempt. `processTask` catches the final error and calls `handleProcessingFailure`.
     -   **Tag:** `unit`, `error-handling`, `resilience`
 
-### 5.5. Large File Chunking
+### 5.5. File Content Analysis
 
--   **AI Verifiable Result Targeted:** Large File Handling.
--   **UUT:** `analyzeFileContent`, `createChunks`.
--   **Test Case 5.1: File below size threshold**
-    -   **Interaction:** `analyzeFileContent` processes a file smaller than `FILE_SIZE_THRESHOLD_KB`.
-    -   **Mock Config:** `readFileContent` returns a small string.
-    -   **Expected Outcome:** `createChunks` is NOT called. The mock LLM client is called exactly once with a prompt for the full file.
-    -   **Tag:** `unit`, `chunking`
--   **Test Case 5.2: File above size threshold**
-    -   **Interaction:** `analyzeFileContent` processes a file larger than `FILE_SIZE_THRESHOLD_KB`.
-    -   **Mock Config:** `readFileContent` returns a large string.
-    -   **Expected Outcome:**
-        1.  `createChunks` is called with the file content.
-        2.  The mock LLM client is called multiple times (once for each chunk).
-        3.  The prompts for each chunk are correctly formatted (e.g., "Analyze chunk 1 of 3...").
-        4.  The final result is an aggregation of the `entities` and `relationships` from all chunk responses, with duplicates removed.
-    -   **Tag:** `unit`, `chunking`
+-   **AI Verifiable Result Targeted:** File Processing.
+-   **UUT:** `analyzeFileContent`.
+-   **Test Case 5.1: File processing**
+    -   **Interaction:** `analyzeFileContent` processes a file of any size.
+    -   **Mock Config:** `readFileContent` returns file content.
+    -   **Expected Outcome:** The mock LLM client is called exactly once with a prompt for the full file, returning structured JSON with entities and relationships.
+    -   **Tag:** `unit`
 
 ## 6. AI-Verifiable Completion Criterion
 

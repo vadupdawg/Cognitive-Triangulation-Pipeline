@@ -32,10 +32,10 @@ class DeepSeekClient {
             ];
 
             const response = await this.client.chat.completions.create({
-                model: 'deepseek-chat',
+                model: 'deepseek-chat', // Points to DeepSeek-V3-0324 (128K context, March 2025)
                 messages: messages,
-                temperature: 0.0, // Minimum temperature for most consistent/concise output
-                max_tokens: 8000, // Maximum allowed for deepseek-chat
+                temperature: 0.2, // Balanced temperature for natural but consistent output
+                max_tokens: 8000, // Maximum allowed for generation
                 stream: false
             });
 

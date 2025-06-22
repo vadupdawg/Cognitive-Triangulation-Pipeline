@@ -1,7 +1,5 @@
 const fs = require('fs').promises;
 const path = require('path');
-const { open } = require('sqlite');
-const sqlite3 = require('sqlite3');
 
 const { ScoutAgent, RepositoryScanner, ChangeAnalyzer, QueuePopulator, StatePersistor } = require('../agents/ScoutAgent');
 const { WorkerAgent } = require('../agents/WorkerAgent');
@@ -10,106 +8,146 @@ const { processBatch } = require('../agents/GraphIngestorAgent');
 const DeepSeekClient = require('./deepseekClient');
 const neo4jDriver = require('./neo4jDriver');
 const sqliteDb = require('./sqliteDb');
+const { getBatchProcessor } = require('./batchProcessor');
 
 /**
  * Production Agent Factory
- * Creates production-ready agents with DeepSeek LLM integration
+ * Creates production-ready agents with high-performance batch processing
  */
 class ProductionAgentFactory {
     constructor() {
         this.deepseekClient = new DeepSeekClient();
-        this.dbPath = path.join(process.cwd(), 'db.sqlite');
+        this.batchProcessor = null;
     }
 
     /**
-     * Test all connections (DeepSeek, Neo4j, SQLite)
+     * Initializes the batch processor for high-concurrency operations
+     */
+    async initializeBatchProcessor() {
+        if (!this.batchProcessor) {
+            this.batchProcessor = getBatchProcessor();
+            await this.batchProcessor.startWorkers();
+            console.log('Batch processor initialized for high-concurrency operations');
+        }
+        return this.batchProcessor;
+    }
+
+    /**
+     * Creates a ScoutAgent with production configuration
+     */
+    async createScoutAgent(targetDirectory) {
+        // Create database connector for ScoutAgent using the new interface
+        const dbConnector = {
+            execute: async (query, params = []) => {
+                return await sqliteDb.execute(query, params);
+            },
+            querySingle: async (query, params = []) => {
+                return await sqliteDb.querySingle(query, params);
+            },
+            beginTransaction: async () => {
+                await sqliteDb.beginTransaction();
+            },
+            commit: async () => {
+                await sqliteDb.commit();
+            },
+            rollback: async () => {
+                await sqliteDb.rollback();
+            }
+        };
+
+        const repositoryScanner = new RepositoryScanner(targetDirectory);
+        const changeAnalyzer = new ChangeAnalyzer();
+        const queuePopulator = new QueuePopulator(dbConnector, targetDirectory);
+        
+        return new ScoutAgent(repositoryScanner, changeAnalyzer, queuePopulator, dbConnector, targetDirectory);
+    }
+
+    /**
+     * Creates a WorkerAgent with high-performance batch processing
+     */
+    async createWorkerAgent(targetDirectory = null) {
+        // Ensure batch processor is initialized
+        await this.initializeBatchProcessor();
+        
+        // Create a lightweight database interface for the worker
+        const dbInterface = {
+            execute: async (query, params = []) => await sqliteDb.execute(query, params),
+            querySingle: async (query, params = []) => await sqliteDb.querySingle(query, params),
+        };
+        
+        return new WorkerAgent(dbInterface, this.deepseekClient, targetDirectory);
+    }
+
+    /**
+     * Processes a batch of completed analysis results and ingests them into Neo4j
+     */
+    async processAnalysisResults() {
+        return await processBatch();
+    }
+
+    /**
+     * Tests database and API connections
      */
     async testConnections() {
         const results = {
             deepseek: false,
             neo4j: false,
-            sqlite: false
+            sqlite: false,
+            redis: false
         };
 
+        // Test DeepSeek connection
         try {
-            // Test DeepSeek connection
             console.log('Testing DeepSeek connection...');
-            results.deepseek = await this.deepseekClient.testConnection();
-            console.log(`DeepSeek: ${results.deepseek ? 'Connected' : 'Failed'}`);
+            const testResponse = await this.deepseekClient.call({
+                system: "You are a test assistant.",
+                user: "Respond with exactly: 'Connection test successful'"
+            });
+            
+            if (testResponse && testResponse.body) {
+                results.deepseek = true;
+                console.log('DeepSeek: Connected');
+            }
+        } catch (error) {
+            console.error('DeepSeek connection failed:', error.message);
+        }
 
-            // Test Neo4j connection
+        // Test Neo4j connection
+        try {
             console.log('Testing Neo4j connection...');
-            await neo4jDriver.verifyConnectivity();
+            const session = neo4jDriver.session();
+            await session.run('RETURN 1 as test');
+            await session.close();
             results.neo4j = true;
             console.log('Neo4j: Connected');
-
-            // Test SQLite connection
-            console.log('Testing SQLite connection...');
-            const db = await this.getSqliteConnection();
-            await db.get('SELECT 1');
-            await db.close();
-            results.sqlite = true;
-            console.log('SQLite: Connected');
-
         } catch (error) {
-            console.error('Connection test failed:', error.message);
+            console.error('Neo4j connection failed:', error.message);
+        }
+
+        // Test SQLite connection
+        try {
+            console.log('Testing SQLite connection...');
+            const testResult = await sqliteDb.querySingle('SELECT 1 as test');
+            if (testResult && testResult.test === 1) {
+                results.sqlite = true;
+                console.log('SQLite: Connected');
+            }
+        } catch (error) {
+            console.error('SQLite connection failed:', error.message);
+        }
+
+        // Test in-memory batch processor
+        try {
+            console.log('Testing in-memory batch processor...');
+            const batchProcessor = getBatchProcessor();
+            const stats = await batchProcessor.getQueueStats();
+            results.redis = true; // Keep same field name for compatibility
+            console.log('In-memory batch processor: Ready');
+        } catch (error) {
+            console.error('Batch processor initialization failed:', error.message);
         }
 
         return results;
-    }
-
-    /**
-     * Get a SQLite database connection
-     */
-    async getSqliteConnection() {
-        const db = await open({
-            filename: this.dbPath,
-            driver: sqlite3.Database
-        });
-        return db;
-    }
-
-    /**
-     * Create a production ScoutAgent
-     * @param {string} repoPath - Path to the repository to scan
-     */
-    async createScoutAgent(repoPath) {
-        const db = await this.getSqliteConnection();
-        
-        // Create a database connector wrapper for ScoutAgent
-        const dbConnector = {
-            execute: async (query, params = []) => {
-                if (query.trim().toUpperCase().startsWith('SELECT')) {
-                    return await db.all(query, params);
-                } else {
-                    return await db.run(query, params);
-                }
-            },
-            beginTransaction: async () => {
-                await db.exec('BEGIN TRANSACTION');
-            },
-            commit: async () => {
-                await db.exec('COMMIT');
-            },
-            rollback: async () => {
-                await db.exec('ROLLBACK');
-            }
-        };
-
-        const repositoryScanner = new RepositoryScanner(repoPath);
-        const changeAnalyzer = new ChangeAnalyzer();
-        const queuePopulator = new QueuePopulator(dbConnector, repoPath);
-        
-        return new ScoutAgent(repositoryScanner, changeAnalyzer, queuePopulator, dbConnector, repoPath);
-    }
-
-    /**
-     * Create a production WorkerAgent with DeepSeek integration
-     * @param {string} targetDirectory - Directory where files are located (optional)
-     */
-    async createWorkerAgent(targetDirectory = null) {
-        const db = await this.getSqliteConnection();
-        return new WorkerAgent(db, fs, this.deepseekClient, targetDirectory);
     }
 
     /**
@@ -118,12 +156,7 @@ class ProductionAgentFactory {
     createGraphIngestorAgent() {
         return {
             processBatch: async (analysisBatch, refactoringBatch) => {
-                const db = await this.getSqliteConnection();
-                try {
-                    await processBatch(analysisBatch, refactoringBatch, db);
-                } finally {
-                    await db.close();
-                }
+                await processBatch(analysisBatch, refactoringBatch);
             }
         };
     }
@@ -132,14 +165,14 @@ class ProductionAgentFactory {
      * Initialize the database with the schema
      */
     async initializeDatabase() {
-        const db = await this.getSqliteConnection();
         try {
             const schemaPath = path.join(__dirname, 'schema.sql');
             const schema = await fs.readFile(schemaPath, 'utf8');
-            await db.exec(schema);
+            await sqliteDb.execute(schema);
             console.log('Database initialized with schema');
-        } finally {
-            await db.close();
+        } catch (error) {
+            console.error('Failed to initialize database:', error);
+            throw error;
         }
     }
 
@@ -150,8 +183,9 @@ class ProductionAgentFactory {
         console.log('🗑️  Clearing all databases for fresh pipeline start...');
         
         try {
-            // Clear SQLite database
+            // Clear SQLite database and immediately apply new schema
             await this.clearSqliteDatabase();
+            await this.initializeDatabase(); // Apply schema immediately after clearing
             
             // Clear Neo4j database
             await this.clearNeo4jDatabase();
@@ -164,31 +198,31 @@ class ProductionAgentFactory {
     }
 
     /**
-     * Clear all SQLite tables
+     * Clear all SQLite tables using optimized DELETE statements
      */
     async clearSqliteDatabase() {
         console.log('  📊 Clearing SQLite database...');
-        const db = await this.getSqliteConnection();
+        
         try {
-            await db.exec('BEGIN TRANSACTION');
+            // Use DELETE statements instead of DROP/CREATE for better WAL mode compatibility
+            const tables = ['analysis_results', 'failed_work', 'work_queue', 'file_state'];
             
-            // Clear all tables in the correct order (respecting foreign key constraints)
-            await db.exec('DELETE FROM failed_work');
-            await db.exec('DELETE FROM analysis_results');
-            await db.exec('DELETE FROM refactoring_tasks');
-            await db.exec('DELETE FROM work_queue');
-            await db.exec('DELETE FROM file_state');
+            await sqliteDb.createTransaction(async (db) => {
+                for (const table of tables) {
+                    try {
+                        await db.run(`DELETE FROM ${table}`);
+                        console.log(`    ✅ Cleared table: ${table}`);
+                    } catch (error) {
+                        // Table might not exist yet, which is fine
+                        console.log(`    ⚠️  Table ${table} does not exist (will be created by schema)`);
+                    }
+                }
+            });
             
-            // Reset auto-increment counters
-            await db.exec('DELETE FROM sqlite_sequence WHERE name IN ("work_queue", "analysis_results", "refactoring_tasks", "failed_work", "file_state")');
-            
-            await db.exec('COMMIT');
             console.log('  ✅ SQLite database cleared');
         } catch (error) {
-            await db.exec('ROLLBACK');
+            console.error('  ❌ Error clearing SQLite database:', error.message);
             throw error;
-        } finally {
-            await db.close();
         }
     }
 
@@ -197,30 +231,60 @@ class ProductionAgentFactory {
      */
     async clearNeo4jDatabase() {
         console.log('  🔗 Clearing Neo4j database...');
-        const session = neo4jDriver.session({ database: process.env.NEO4J_DATABASE || 'backend' });
+        
         try {
-            // Delete all nodes and relationships
+            const session = neo4jDriver.session();
             await session.run('MATCH (n) DETACH DELETE n');
-            console.log('  ✅ Neo4j database cleared');
-        } finally {
             await session.close();
+            console.log('  ✅ Neo4j database cleared');
+        } catch (error) {
+            console.error('  ❌ Error clearing Neo4j database:', error.message);
+            throw error;
         }
     }
 
     /**
-     * Clean up all connections
-     * Note: We don't close the Neo4j driver here as it's a singleton that should persist
-     * across multiple pipeline runs. Individual sessions are closed where they're used.
+     * Get SQLite connection using the new high-performance interface
+     */
+    async getSqliteConnection() {
+        // Return a connection-like interface for backward compatibility
+        return {
+            execute: async (query, params = []) => await sqliteDb.execute(query, params),
+            all: async (query, params = []) => await sqliteDb.execute(query, params),
+            get: async (query, params = []) => await sqliteDb.querySingle(query, params),
+            run: async (query, params = []) => await sqliteDb.execute(query, params),
+            exec: async (query) => await sqliteDb.execute(query),
+            close: () => {
+                // No-op since we use a singleton connection
+            }
+        };
+    }
+
+    /**
+     * Gets batch processor statistics for monitoring
+     */
+    async getBatchStats() {
+        if (this.batchProcessor) {
+            return await this.batchProcessor.getQueueStats();
+        }
+        return null;
+    }
+
+    /**
+     * Cleanup resources
      */
     async cleanup() {
-        try {
-            // Only log cleanup - don't actually close the driver as it's shared
-            // Individual sessions are closed in their respective methods
-            console.log('Cleaned up database connections');
-        } catch (error) {
-            console.error('Cleanup error:', error.message);
+        console.log('Cleaning up production agent factory...');
+        
+        if (this.batchProcessor) {
+            await this.batchProcessor.shutdown();
         }
+        
+        sqliteDb.close();
+        await neo4jDriver.close();
+        
+        console.log('Production agent factory cleanup complete');
     }
 }
 
-module.exports = ProductionAgentFactory; 
+module.exports = { ProductionAgentFactory }; 

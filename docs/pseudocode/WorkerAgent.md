@@ -8,9 +8,6 @@
 -   `LLM_RETRY_COUNT`-- Integer -- (Default-- 3) Max retries for LLM calls.
 -   `LLM_BACKOFF_FACTOR`-- Integer -- (Default-- 2) Factor for exponential backoff on retries.
 -   `POLLING_INTERVAL`-- Integer -- (Default-- 5 seconds) Time to wait when the queue is empty.
--   `FILE_SIZE_THRESHOLD_KB`-- Integer -- (Default-- 128) Files larger than this will be chunked.
--   `CHUNK_SIZE_KB`-- Integer -- (Default-- 120) The size of each chunk sent to the LLM.
--   `CHUNK_OVERLAP_LINES`-- Integer -- (Default-- 50) Number of lines to overlap between chunks to maintain context.
 
 ## 2. Main Entry Point
 
@@ -41,135 +38,68 @@ END FUNCTION
 
 ## 3. Core Functions
 
-FUNCTION claimTask(db, workerId)
-    -- INPUT-- db (DatabaseConnection), workerId (String)
-    -- OUTPUT-- WorkItem (Object) or NULL
-    -- TDD Anchor-- Test that this query correctly claims one 'pending' task and updates its status and worker_id.
-    -- TDD Anchor-- Test that if two workers call this simultaneously, only one succeeds in claiming a specific task.
-    -- TDD Anchor-- Test that it returns NULL when no 'pending' tasks exist in the work_queue.
+FUNCTION claimTask(dbConnection, workerId)
+    -- INPUT: dbConnection (Database Connection), workerId (String)
+    -- OUTPUT: Task object or NULL
+    -- TEST-- Returns a task when one is available.
+    -- TEST-- Returns NULL when no tasks are pending.
+    -- TEST-- Correctly updates the claimed task with worker_id and status.
     
-    sql = "UPDATE work_queue SET status = 'processing', worker_id = ? WHERE id = (SELECT id FROM work_queue WHERE status = 'pending' ORDER BY id ASC LIMIT 1) RETURNING id, file_path, content_hash;"
+    -- Atomic task claiming using UPDATE...WHERE to prevent race conditions
+    updateResult = EXECUTE SQL: "UPDATE work_queue 
+                                 SET status = 'processing', worker_id = ? 
+                                 WHERE id = (SELECT id FROM work_queue WHERE status = 'pending' ORDER BY id ASC LIMIT 1) 
+                                 AND status = 'pending'"
+                                 WITH PARAMETERS: [workerId]
     
-    BEGIN TRANSACTION
-    claimedTask = db.querySingle(sql, workerId)
-    COMMIT TRANSACTION
+    IF updateResult.rowsAffected = 0 THEN
+        RETURN NULL
+    END IF
+    
+    claimedTask = EXECUTE SQL: "SELECT id, file_path, content_hash FROM work_queue WHERE worker_id = ? AND status = 'processing' ORDER BY id DESC LIMIT 1"
+                               WITH PARAMETERS: [workerId]
     
     RETURN claimedTask
 END FUNCTION
 
-FUNCTION processTask(db, task)
-    -- INPUT-- db (DatabaseConnection), task (WorkItem)
-    -- OUTPUT-- None
+FUNCTION processTask(dbConnection, task)
+    -- INPUT: dbConnection (Database Connection), task (Task Object)
+    -- OUTPUT: None (side effects-- database updates)
+    -- TEST-- Successfully processes a valid task and saves results.
+    -- TEST-- Handles file reading errors gracefully.
+    -- TEST-- Handles LLM call failures gracefully.
+    -- TEST-- Handles JSON validation errors gracefully.
     
     TRY
-        -- TEST-- processTask correctly calls readFileContent.
         fileContent = readFileContent(task.file_path)
+        analysisResult = analyzeFileContent(task.file_path, fileContent)
+        saveSuccessResult(dbConnection, task.id, task.file_path, analysisResult)
         
-        -- TEST-- processTask correctly calls analyzeFileContent.
-        llmAnalysisResult = analyzeFileContent(task.file_path, fileContent)
-        
-        -- The raw response text is needed for hashing to avoid complexities of canonicalization.
-        rawJsonString = JSON.stringify(llmAnalysisResult)
-        
-        -- TEST-- processTask correctly calls computeSha256Hash on the raw JSON string.
-        responseHash = computeSha256Hash(rawJsonString)
-
-        -- TEST-- processTask calls saveSuccessResult on a fully successful workflow.
-        saveSuccessResult(db, task.id, rawJsonString, responseHash)
-        logInfo("Successfully processed and stored result for task ID-- " + task.id)
-
+        logInfo("Successfully processed task ID-- " + task.id)
     CATCH FileNotFoundError as e
-        -- TEST-- A FileNotFoundError correctly triggers handleProcessingFailure.
-        logError("File not found for task ID-- " + task.id + ". Error-- " + e.message)
-        handleProcessingFailure(db, task.id, "File not found at path-- " + task.file_path)
-
+        handleProcessingFailure(dbConnection, task.id, "File not found-- " + e.message)
     CATCH LlmCallFailedError as e
-        -- TEST-- A final LlmCallFailedError correctly triggers handleProcessingFailure.
-        logError("LLM call failed permanently for task ID-- " + task.id + ". Error-- " + e.message)
-        handleProcessingFailure(db, task.id, "LLM call failed after all retries.")
-
+        handleProcessingFailure(dbConnection, task.id, "LLM call failed-- " + e.message)
     CATCH InvalidJsonResponseError as e
-        -- TEST-- A persistent InvalidJsonResponseError correctly triggers handleProcessingFailure.
-        logError("Invalid JSON from LLM after all retries for task ID-- " + task.id + ". Error-- " + e.message)
-        handleProcessingFailure(db, task.id, "LLM returned invalid JSON.")
-        
-    CATCH DatabaseError as e
-        -- TEST-- A DatabaseError logs a fatal error and causes the worker to exit.
-        logError("Fatal database error during task processing. Shutting down. Error-- " + e.message)
-        EXIT -- Or trigger a restart policy
-        
+        handleProcessingFailure(dbConnection, task.id, "Invalid JSON response-- " + e.message)
+    CATCH ANY other error as e
+        handleProcessingFailure(dbConnection, task.id, "Unexpected error-- " + e.message)
     END TRY
 END FUNCTION
 
 FUNCTION analyzeFileContent(filePath, fileContent)
-    -- INPUT-- filePath (String), fileContent (String)
-    -- OUTPUT-- A single JSON object representing the complete analysis.
-    -- THROWS-- LlmCallFailedError, InvalidJsonResponseError
-    -- TEST-- For a file below threshold, it calls constructLlmPrompt once and returns the result.
-    -- TEST-- For a file above threshold, it calls createChunks.
-    -- TEST-- For a large file, it calls the LLM for each chunk and aggregates the results.
-    -- TEST-- For a large file, it correctly deduplicates entities and relationships from the aggregated chunks.
-
-    IF length(fileContent) <= FILE_SIZE_THRESHOLD_KB * 1024 THEN
-        prompt = constructLlmPrompt(filePath, fileContent)
-        llmResponseText = callLlmWithRetries(prompt, DEEPSEEK_API_KEY, LLM_RETRY_COUNT, LLM_BACKOFF_FACTOR)
-        validatedJson = validateLlmResponse(llmResponseText)
-        RETURN validatedJson
-    ELSE
-        chunks = createChunks(fileContent, CHUNK_SIZE_KB * 1024, CHUNK_OVERLAP_LINES)
-        allEntities = []
-        allRelationships = []
-        
-        LOOP for i from 0 to length(chunks) - 1
-            chunk = chunks[i]
-            prompt = constructLlmPromptForChunk(filePath, chunk, i + 1, length(chunks))
-            chunkResponseText = callLlmWithRetries(prompt, DEEPSEEK_API_KEY, LLM_RETRY_COUNT, LLM_BACKOFF_FACTOR)
-            chunkJson = validateLlmResponse(chunkResponseText)
-            
-            APPEND all elements of chunkJson.entities TO allEntities
-            APPEND all elements of chunkJson.relationships TO allRelationships
-        END LOOP
-        
-        -- Deduplication is crucial to merge overlapping analyses correctly.
-        -- The exact mechanism for deduplication (e.g., based on 'qualifiedName') needs to be defined.
-        uniqueEntities = deduplicate(allEntities, key="qualifiedName")
-        uniqueRelationships = deduplicate(allRelationships, key="source_qName,target_qName,type")
-
-        RETURN {
-            "filePath": filePath,
-            "entities": uniqueEntities,
-            "relationships": uniqueRelationships,
-            "is_chunked": true
-        }
-    END IF
+    -- INPUT: filePath (String), fileContent (String)
+    -- OUTPUT: JSON Object with entities and relationships
+    -- TEST-- Successfully processes file content and returns valid JSON.
+    -- TEST-- For any file size, it calls the LLM and returns structured data.
+    
+    prompt = constructLlmPrompt(filePath, fileContent)
+    llmResponseText = callLlmWithRetries(prompt, DEEPSEEK_API_KEY, LLM_RETRY_COUNT, LLM_BACKOFF_FACTOR)
+    validatedJson = validateLlmResponse(llmResponseText)
+    RETURN validatedJson
 END FUNCTION
-
 
 ## 4. Helper Functions
-
-FUNCTION createChunks(content, chunkSize, overlapLines)
-    -- INPUT-- content (String), chunkSize (Integer), overlapLines (Integer)
-    -- OUTPUT-- Array of Strings (chunks)
-    -- TEST-- Returns a single chunk if content is smaller than chunkSize.
-    -- TEST-- Returns multiple chunks for larger content.
-    -- TEST-- Correctly overlaps consecutive chunks by overlapLines.
-    -- TEST-- The combination of all chunks (without overlap) reconstructs the original content.
-    
-    lines = split(content, "\n")
-    chunks = []
-    currentPosition = 0
-    
-    WHILE currentPosition < length(lines)
-        endPosition = findPositionForChunkSize(lines, currentPosition, chunkSize)
-        chunkLines = lines from currentPosition to endPosition
-        ADD join(chunkLines, "\n") to chunks
-        
-        overlapStart = max(0, endPosition - overlapLines)
-        currentPosition = overlapStart
-    END WHILE
-    
-    RETURN chunks
-END FUNCTION
 
 FUNCTION readFileContent(filePath)
     -- INPUT-- filePath (String)
@@ -198,18 +128,7 @@ FUNCTION constructLlmPrompt(filePath, fileContent)
     RETURN { system-- systemPrompt, user-- userPrompt }
 END FUNCTION
 
-FUNCTION constructLlmPromptForChunk(filePath, chunkContent, chunkNum, totalChunks)
-    -- INPUT-- filePath (String), chunkContent (String), chunkNum (Integer), totalChunks (Integer)
-    -- OUTPUT-- Prompt (Object)
-    -- TEST-- The system prompt correctly instructs the LLM that it is seeing a partial file.
-    -- TEST-- The user prompt includes the file path, chunk number, and total chunks.
 
-    systemPrompt = "You are an expert code analysis tool. You are analyzing a chunk of a larger file. Focus only on the code provided in this chunk. Output a single, valid JSON object with 'entities' and 'relationships' found *within this chunk*. Do not include a 'filePath' key. All code entities must have a 'qualifiedName'. Be aware that some relationships may span across chunks; only declare relationships where you can identify both source and target within this chunk."
-
-    userPrompt = "Analyze chunk " + chunkNum + " of " + totalChunks + " for the file '" + filePath + "'.\n\n---\n\n" + chunkContent
-
-    RETURN { system-- systemPrompt, user-- userPrompt }
-END FUNCTION
 
 FUNCTION callLlmWithRetries(prompt, apiKey, retryCount, backoffFactor)
     -- INPUT-- prompt (Object), apiKey (String), retryCount (Integer), backoffFactor (Integer)

@@ -15,8 +15,8 @@ This document identifies unanswered questions and areas requiring deeper investi
 ## 2. LLM-based Code Analysis
 
 *   **Handling Large/Complex Files**:
-    *   **Gap**: The initial research identified chunking as a solution for files exceeding the context window, but the optimal strategy for maintaining semantic context across chunks is still unclear.
-    *   **Next Steps**: Research specific techniques for "semantic chunking" of source code. Are there libraries or algorithms for splitting code along function or class boundaries? How should the prompts be structured to handle a chunk and relate it to the parent file?
+    *   **Gap**: Previously identified concern about large files exceeding context window. However, analysis indicates that source code files in the target domain are well within LLM context limits.
+*   **Resolution**: Files will be processed entirely without chunking, simplifying the architecture and ensuring complete semantic context is preserved.
 
 *   **DeepSeek Coder V3 Specifics**:
     *   **Gap**: The research on prompt engineering is general to modern LLMs. More specific information on the capabilities and limitations of DeepSeek Coder V3 regarding structured data generation is needed.

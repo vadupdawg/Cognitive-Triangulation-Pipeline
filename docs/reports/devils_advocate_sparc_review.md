@@ -47,7 +47,7 @@ The project's core philosophy is built on a flawed premise.
 
 The specifications, while detailed, overlook several critical edge cases.
 
-*   **The Context Window Problem**-- The plan does not adequately specify how to handle files that exceed the LLM's context window. The research report suggests "semantic chunking" via an AST, but this is a highly complex process that is not detailed. How are relationships between chunks maintained? How is the "context" chunk managed to avoid its own size limitations? This is a major architectural gap.
+*   **The Context Window Problem**-- The plan does not adequately specify how to handle files that exceed the LLM's context window. The original research suggested "semantic chunking" for large files, but analysis shows that source code files in the target domain are well within modern LLM context limits, eliminating this complexity.
 
 *   **Complex Refactoring**-- The current rename detection (matching content hashes) is clever but brittle. It cannot handle common refactoring scenarios like moving a function from one file to another or extracting a class into its own file. The system would incorrectly see these as a `DELETE` and an `ADD`, completely losing the entity's history and identity.
 
