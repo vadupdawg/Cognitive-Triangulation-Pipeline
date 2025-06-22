@@ -1,2 +1,5 @@
-// Jest setup for Node.js environment
-// No additional setup needed for our backend tests
+const { initialize } = require('./src/utils/initializeDb');
+
+beforeAll(async () => {
+    await initialize();
+});

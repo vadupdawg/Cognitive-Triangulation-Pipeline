@@ -5,6 +5,7 @@ module.exports = {
         '**/tests/acceptance/**/*.test.js',
         '**/tests/unit/**/*.test.js',
         '**/tests/integration/**/*.test.js',
+        '**/tests/functional/**/*.test.js',
     ],
     setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
       // globalSetup: '<rootDir>/jest.globalSetup.js',

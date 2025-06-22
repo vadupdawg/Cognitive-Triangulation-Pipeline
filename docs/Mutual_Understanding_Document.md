@@ -19,6 +19,19 @@ The project's success will be measured primarily by two factors:
 *   **Accuracy:** The final Neo4j graph must be a 100% accurate representation of the entities and relationships present in the source code, as defined by the project's schema. This is the paramount success metric.
 *   **Polyglot Capability:** The system must be able to effectively analyze a wide variety of programming languages, correctly identifying the specified entities and relationships regardless of the language syntax.
 
-## 4. Target Audience
+## 4. Testing Strategy
+
+**CRITICAL REQUIREMENT: NO MOCKING POLICY**
+
+All tests in this project must be production-grade and use live environments and resources. This is a strict, non-negotiable rule that applies to all testing activities:
+
+*   **No Database Mocking:** Tests must use real SQLite and Neo4j databases, not mocked versions.
+*   **No File System Mocking:** Tests must interact with actual files in the `polyglot-test/` directory.
+*   **No API Mocking:** Tests must use real API connections where applicable.
+*   **Production Environment:** The `polyglot-test/` directory contains the actual application and databases that serve as the testing environment.
+
+This approach ensures that tests validate real-world behavior and catch integration issues that mocks might miss. The testing environment is specifically designed to support this production-grade testing approach.
+
+## 5. Target Audience
 
 The system is intended for any individual or system that can benefit from a deep, structural understanding of a codebase. This includes, but is not limited to, individual developers, software architects, team leads, and automated systems for research or analysis.
