@@ -26,7 +26,7 @@ class ScoutAgent {
     async run() {
         console.log("ScoutAgent run started.");
         try {
-            const files = this.discoverFiles(this.repoPath);
+            const files = await this.discoverFiles(this.repoPath);
             await this.saveFilesToDb(files);
             console.log("ScoutAgent run finished successfully.");
         } catch (error) {
@@ -36,13 +36,13 @@ class ScoutAgent {
     }
 
     /**
-     * Recursively scans a directory to find all files.
+     * Recursively scans a directory to find all files asynchronously.
      * @param {string} directory - The directory to scan.
-     * @returns {Array<Object>} An array of file objects.
+     * @returns {Promise<Array<Object>>} A promise that resolves to an array of file objects.
      */
-    discoverFiles(directory) {
-        const allFiles = [];
-        const items = fs.readdirSync(directory, { withFileTypes: true });
+    async discoverFiles(directory) {
+        let allFiles = [];
+        const items = await fsp.readdir(directory, { withFileTypes: true });
 
         for (const item of items) {
             const fullPath = path.join(directory, item.name);
@@ -50,12 +50,13 @@ class ScoutAgent {
 
             if (item.isDirectory()) {
                 if (!/(\.git|node_modules)/.test(relativePath)) {
-                    allFiles.push(...this.discoverFiles(fullPath));
+                    const subFiles = await this.discoverFiles(fullPath);
+                    allFiles = allFiles.concat(subFiles);
                 }
             } else if (item.isFile()) {
                 const language = this.detectLanguage(fullPath);
                 if (language !== 'unknown') {
-                    const content = fs.readFileSync(fullPath);
+                    const content = await fsp.readFile(fullPath);
                     const checksum = this.calculateChecksum(content);
                     allFiles.push({ filePath: fullPath, language, checksum });
                 }
@@ -100,15 +101,23 @@ class ScoutAgent {
      * @returns {Promise<void>}
      */
     async saveFilesToDb(files) {
-        for (const file of files) {
-            const existingFile = await this.db.get('SELECT id, checksum FROM files WHERE file_path = ?', file.filePath);
-            if (existingFile) {
-                if (existingFile.checksum !== file.checksum) {
-                    await this.db.run('UPDATE files SET checksum = ?, last_modified = CURRENT_TIMESTAMP, status = "pending" WHERE id = ?', file.checksum, existingFile.id);
+        await this.db.run('BEGIN TRANSACTION');
+        try {
+            for (const file of files) {
+                const existingFile = await this.db.get('SELECT id, checksum FROM files WHERE file_path = ?', file.filePath);
+                if (existingFile) {
+                    if (existingFile.checksum !== file.checksum) {
+                        await this.db.run('UPDATE files SET checksum = ?, updated_at = CURRENT_TIMESTAMP, status = "pending" WHERE id = ?', file.checksum, existingFile.id);
+                    }
+                } else {
+                    await this.db.run('INSERT INTO files (file_path, language, checksum, status) VALUES (?, ?, ?, ?)', file.filePath, file.language, file.checksum, 'pending');
                 }
-            } else {
-                await this.db.run('INSERT INTO files (file_path, language, checksum, status) VALUES (?, ?, ?, ?)', file.filePath, file.language, file.checksum, 'pending');
             }
+            await this.db.run('COMMIT');
+        } catch (error) {
+            await this.db.run('ROLLBACK');
+            console.error("Failed to save files to the database:", error);
+            throw error;
         }
     }
 }

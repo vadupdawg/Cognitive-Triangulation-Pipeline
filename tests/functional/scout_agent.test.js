@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { getConnection } = require('../../src/utils/sqliteDb');
+const { getDb } = require('../../src/utils/sqliteDb');
 const ScoutAgent = require('../../src/agents/ScoutAgent');
 
 describe('ScoutAgent - Production-Focused Tests', () => {
@@ -23,7 +23,7 @@ describe('ScoutAgent - Production-Focused Tests', () => {
     });
 
     beforeEach(async () => {
-        db = await getConnection();
+        db = await getDb();
         await db.run('DELETE FROM files');
         scoutAgent = new ScoutAgent(db, repoPath);
     });

@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs/promises');
 const { JsonSchemaValidator, ValidationError } = require('../utils/jsonSchemaValidator');
 const { getBatchProcessor } = require('../utils/batchProcessor');
 
@@ -23,13 +24,13 @@ class WorkerAgent {
     // This is more efficient than transactions for this simple operation
     
     // Try to claim a task atomically with a single UPDATE statement
-    const claimResult = await this.db.execute(
-        `UPDATE work_queue 
-         SET status = 'processing', worker_id = ? 
+    const claimResult = await this.db.run(
+        `UPDATE work_queue
+         SET status = 'processing', worker_id = ?
          WHERE id = (
-           SELECT id FROM work_queue 
-           WHERE status = 'pending' 
-           ORDER BY id ASC 
+           SELECT id FROM work_queue
+           WHERE status = 'pending'
+           ORDER BY id ASC
            LIMIT 1
          ) AND status = 'pending'`,
         [workerId]
@@ -40,11 +41,11 @@ class WorkerAgent {
     }
 
     // Get the task that was just claimed by this worker (most recent)
-    const task = await this.db.querySingle(
-        `SELECT id, file_path, content_hash 
-         FROM work_queue 
-         WHERE worker_id = ? AND status = 'processing' 
-         ORDER BY id DESC 
+    const task = await this.db.get(
+        `SELECT id, file_path, content_hash
+         FROM work_queue
+         WHERE worker_id = ? AND status = 'processing'
+         ORDER BY id DESC
          LIMIT 1`,
         [workerId]
     );
@@ -53,7 +54,7 @@ class WorkerAgent {
   }
 
   async claimSpecificTask(taskId, workerId) {
-    const claimResult = await this.db.execute(
+    const claimResult = await this.db.run(
         `UPDATE work_queue SET status = 'processing', worker_id = ? WHERE id = ? AND status = 'pending'`,
         [workerId, taskId]
     );
@@ -62,7 +63,7 @@ class WorkerAgent {
         return null;
     }
 
-    return await this.db.querySingle(
+    return await this.db.get(
         'SELECT id, file_path, content_hash FROM work_queue WHERE id = ?',
         [taskId]
     );
@@ -72,13 +73,32 @@ class WorkerAgent {
     try {
       console.log(`[WorkerAgent] Processing task ${task.id} for file: ${task.file_path}`);
       
-      // Convert to absolute path for the LLM
-      const absoluteFilePath = path.resolve(this.targetDirectory || '', task.file_path);
-      console.log(`[WorkerAgent] Absolute file path: ${absoluteFilePath}`);
+      // VULN-001: Path Traversal Fix
+      const safeTargetDirectory = path.resolve(this.targetDirectory || '.');
+      const intendedFilePath = path.resolve(safeTargetDirectory, task.file_path);
+
+      if (!intendedFilePath.startsWith(safeTargetDirectory + path.sep)) {
+          const errorMessage = `Path traversal attempt detected for file path: ${task.file_path}`;
+          console.error(`[WorkerAgent] Security Alert: ${errorMessage}`);
+          await this._queueProcessingFailure(task.id, 'Invalid file path specified.');
+          return;
+      }
+
+             const absoluteFilePath = intendedFilePath; // Use the validated path
+             console.log(`[WorkerAgent] Absolute file path: ${absoluteFilePath}`);
       
+            // Check file size to warn about potential memory issues
+            const stats = await fs.stat(absoluteFilePath);
+            const fileSizeInMB = stats.size / (1024 * 1024);
+            if (fileSizeInMB > 10) { // 10 MB threshold
+              console.warn(`[WorkerAgent] File ${task.file_path} is large (${fileSizeInMB.toFixed(2)}MB). Reading entire file into memory.`);
+            }
+             
+             // Read file content to be passed to the LLM
+             const fileContent = await fs.readFile(absoluteFilePath, 'utf-8');
       // Let the LLM read and analyze the file directly
       console.log(`[WorkerAgent] Creating guardrail prompt...`);
-      const prompt = this.validator.createGuardrailPrompt(absoluteFilePath);
+      const prompt = this.validator.createGuardrailPrompt(fileContent);
       console.log(`[WorkerAgent] Prompt created successfully`);
       
       console.log(`[WorkerAgent] Calling LLM with retries...`);
@@ -89,16 +109,20 @@ class WorkerAgent {
       await this._queueSuccessResult(task.id, task.file_path, absoluteFilePath, JSON.stringify(llmAnalysisResult));
       console.log(`[WorkerAgent] Success result queued for task ${task.id}`);
     } catch (error) {
+      // VULN-002: Information Leakage Fix
       console.error(`[WorkerAgent] Error processing task ${task.id}:`, error);
-      console.error(`[WorkerAgent] Error stack:`, error.stack);
       
-      const errorMessage = error instanceof LlmCallFailedError || error instanceof ValidationError 
-        ? error.message 
-        : `Unexpected error: ${error.message}`;
+      let errorMessageForDb;
+      if (error instanceof LlmCallFailedError || error instanceof ValidationError) {
+        errorMessageForDb = error.message;
+      } else {
+        // For all other errors, use a generic message for the database.
+        errorMessageForDb = 'An unexpected error occurred while processing the file.';
+      }
       
       // Queue the failure for batch processing instead of immediate database write
-      await this._queueProcessingFailure(task.id, errorMessage);
-      console.log(`[WorkerAgent] Failure queued for task ${task.id}: ${errorMessage}`);
+      await this._queueProcessingFailure(task.id, errorMessageForDb);
+      console.log(`[WorkerAgent] Failure queued for task ${task.id}: ${errorMessageForDb}`);
     }
   }
 
@@ -129,34 +153,19 @@ class WorkerAgent {
     }
     throw new LlmCallFailedError(`LLM call failed after ${retries} attempts: ${lastError.message}`);
   }
-
-  async _queueSuccessResult(taskId, filePath, absoluteFilePath, rawJsonString) {
-    // For now, write directly to database to ensure data is stored
-    // TODO: Fix batch processor later
-    try {
-      // Insert into analysis_results with correct column name (work_item_id, not task_id)
-      await this.db.execute(
-        `INSERT INTO analysis_results (work_item_id, file_path, absolute_file_path, llm_output, status, validation_passed, created_at) 
-         VALUES (?, ?, ?, ?, 'completed', 1, datetime('now'))`,
-        [taskId, filePath, absoluteFilePath, rawJsonString]
-      );
-      
-      // Also update work_queue status
-      await this.db.execute(
-        `UPDATE work_queue SET status = 'completed' WHERE id = ?`,
-        [taskId]
-      );
-      
-      console.log(`[WorkerAgent] Result stored directly in database for task ${taskId}`);
-    } catch (error) {
-      console.error(`[WorkerAgent] Failed to store result for task ${taskId}:`, error);
-      // Fallback to batch processor
-      await this.batchProcessor.queueAnalysisResult(taskId, filePath, absoluteFilePath, rawJsonString);
-    }
+   async _queueSuccessResult(taskId, filePath, absoluteFilePath, rawJsonString) {
+    // The batch processor is designed to handle both storing the analysis result
+    // and updating the work queue status in an optimized manner.
+    await this.batchProcessor.queueAnalysisResult(
+      taskId,
+      filePath,
+      absoluteFilePath,
+      rawJsonString
+    );
+    console.log(`[WorkerAgent] Success result queued for batch processing for task ${taskId}`);
   }
-
-  async _queueProcessingFailure(taskId, errorMessage) {
-    // Queue the failure for batch processing - no direct database access
+   async _queueProcessingFailure(taskId, errorMessage) {
+    // Queue the failure for batch processing.
     await this.batchProcessor.queueFailedWork(taskId, errorMessage);
   }
 
