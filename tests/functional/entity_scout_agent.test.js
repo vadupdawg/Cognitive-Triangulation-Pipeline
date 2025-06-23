@@ -30,9 +30,9 @@ describe('EntityScout Agent - Functional Tests', () => {
     expect(report.error).toBeNull();
 
     // Verify a known POI
-    const userClass = report.pois.find(p => p.name === 'User' && p.type === 'Class');
+    const userClass = report.pois.find(p => p.name === 'User' && p.type === 'ClassDefinition');
     expect(userClass).toBeDefined();
-    expect(userClass.line).toBe(4);
+    expect(userClass.startLine).toBe(4);
   });
 
   /**
@@ -40,16 +40,13 @@ describe('EntityScout Agent - Functional Tests', () => {
    */
   test('ES-002: should return SKIPPED_FILE_TOO_LARGE for a file exceeding the size limit', async () => {
     const filePath = path.join(TEST_DATA_DIR, 'large_file.txt');
-    const originalMaxSize = config.maxFileSize;
-    config.maxFileSize = 500; // Temporarily set a small limit for testing
+    const scoutWithLimit = new EntityScout({ maxFileSize: 500 });
 
-    const report = await scout.run(filePath);
+    const report = await scoutWithLimit.run(filePath);
 
     expect(report.status).toBe('SKIPPED_FILE_TOO_LARGE');
     expect(report.pois).toEqual([]);
     expect(report.error).toMatch(/File size .* exceeds the maximum allowed size/);
-
-    config.maxFileSize = originalMaxSize; // Reset config
   });
 
   /**
@@ -95,7 +92,7 @@ describe('LLMResponseSanitizer Module', () => {
    * @group @sanitizer
    */
   test('SAN-001: should remove trailing commas from a JSON string', () => {
-    const malformedJson = `{"pois": [{"name": "User","type": "Class","line": 4},{"name": "add","type": "Function","line": 16},]}`;
+    const malformedJson = `{"pois": [{"name": "User","type": "Class","startLine": 4, "endLine": 20, "confidence": 0.9},{"name": "add","type": "Function","startLine": 16, "endLine": 18, "confidence": 0.8},]}`;
     const sanitized = LLMResponseSanitizer.sanitize(malformedJson);
     let parsed = null;
     expect(() => parsed = JSON.parse(sanitized)).not.toThrow();
@@ -111,8 +108,8 @@ describe('LLMResponseSanitizer Module', () => {
       \`\`\`json
       {
         "pois": [
-          { "name": "User", "type": "Class", "line": 4 },
-          { "name": "add", "type": "Function", "line": 16 }
+          { "name": "User", "type": "Class", "startLine": 4, "endLine": 20, "confidence": 0.9 },
+          { "name": "add", "type": "Function", "startLine": 16, "endLine": 18, "confidence": 0.8 }
         ]
       }
       \`\`\`
@@ -128,7 +125,7 @@ describe('LLMResponseSanitizer Module', () => {
    * @group @sanitizer
    */
   test('SAN-003: should return an unchanged string for valid JSON', () => {
-    const validJson = `{"pois":[{"name":"User","type":"Class","line":4}]}`;
+    const validJson = `{"pois":[{"name":"User","type":"Class","startLine":4, "endLine": 20, "confidence": 0.9}]}`;
     const sanitized = LLMResponseSanitizer.sanitize(validJson);
     expect(sanitized).toBe(validJson);
   });
@@ -157,7 +154,7 @@ describe('EntityScout Agent - Resilient Retry Logic', () => {
   test('ES-006: should succeed on the second attempt after one validation failure', async () => {
     const filePath = path.join(TEST_DATA_DIR, 'tricky_to_parse.js');
     const malformedResponse = await fs.readFile(path.join(TEST_DATA_DIR, 'malformed_json_response.txt'), 'utf-8');
-    const validResponse = `{"pois":[{"name":"myObject","type":"Object","line":3},{"name":"myFunction","type":"Function","line":4},{"name":"nested","type":"Function","line":6},{"name":"anotherFunc","type":"ArrowFunction","line":11},{"name":"Special","type":"Class","line":15},{"name":"value","type":"Getter","line":16}]}`;
+    const validResponse = `{"pois":[{"name":"myObject","type":"Object","startLine":3,"endLine":3,"confidence":0.9},{"name":"myFunction","type":"FunctionDefinition","startLine":4,"endLine":9,"confidence":0.95},{"name":"nested","type":"FunctionDefinition","startLine":6,"endLine":8,"confidence":0.88},{"name":"anotherFunc","type":"ArrowFunction","startLine":11,"endLine":13,"confidence":0.92},{"name":"Special","type":"ClassDefinition","startLine":15,"endLine":18,"confidence":0.98},{"name":"value","type":"Getter","startLine":16,"endLine":16,"confidence":0.85}]}`;
 
     mockLLMClient.query
       .mockResolvedValueOnce(malformedResponse) // Fails first time
@@ -181,17 +178,16 @@ describe('EntityScout Agent - Resilient Retry Logic', () => {
     // The client will return malformed data for the initial call + all retry attempts
     mockLLMClient.query.mockResolvedValue(malformedResponse);
 
-    const originalMaxRetries = config.maxRetries;
-    config.maxRetries = 2; // Set for predictability
+    const scoutWithRetries = new EntityScout({ maxRetries: 2 });
+    scoutWithRetries.llmClient = mockLLMClient;
 
-    const report = await scout.run(filePath);
+
+    const report = await scoutWithRetries.run(filePath);
 
     expect(report.status).toBe('FAILED_VALIDATION_ERROR');
     expect(report.pois).toEqual([]);
-    expect(report.analysisAttempts).toBe(config.maxRetries + 1);
+    expect(report.analysisAttempts).toBe(3);
     expect(report.error).toMatch(/Failed to get valid JSON response after/);
-    expect(mockLLMClient.query).toHaveBeenCalledTimes(config.maxRetries + 1);
-
-    config.maxRetries = originalMaxRetries; // Reset config
+    expect(mockLLMClient.query).toHaveBeenCalledTimes(3);
   });
 });

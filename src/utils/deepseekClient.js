@@ -60,6 +60,29 @@ class DeepSeekClient {
     }
 
     /**
+     * Alternative interface for compatibility with tests and other code
+     * @param {Object} options - Chat completion options
+     * @returns {Promise<Object>} - The response in OpenAI format
+     */
+    async createChatCompletion(options) {
+        try {
+            const response = await this.client.chat.completions.create({
+                model: options.model || 'deepseek-chat',
+                messages: options.messages,
+                temperature: options.temperature || 0.2,
+                max_tokens: options.max_tokens || 8000,
+                response_format: options.response_format,
+                stream: false
+            });
+
+            return response;
+        } catch (error) {
+            console.error('DeepSeek createChatCompletion failed:', error.message);
+            throw error;
+        }
+    }
+
+    /**
      * Test the connection to DeepSeek API
      * @returns {Promise<boolean>} - True if connection is successful
      */

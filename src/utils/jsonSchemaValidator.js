@@ -624,4 +624,39 @@ ${importExportLines.join('\n')}
     }
 }
 
-module.exports = { JsonSchemaValidator, ValidationError }; 
+const POI_SCHEMA = {
+    type: 'object',
+    properties: {
+        pois: {
+            type: 'array',
+            items: {
+                type: 'object',
+                properties: {
+                    name: { type: 'string' },
+                    type: { type: 'string' },
+                    startLine: { type: 'number' },
+                    endLine: { type: 'number' },
+                    confidence: { type: 'number', minimum: 0, maximum: 1 },
+                },
+                required: ['name', 'type', 'startLine', 'endLine', 'confidence'],
+            },
+        },
+    },
+    required: ['pois'], // This makes the 'pois' array itself mandatory.
+};
+
+const FILE_ANALYSIS_SCHEMA = {
+    type: 'object',
+    properties: {
+        filePath: { type: 'string' },
+        fileChecksum: { type: ['string', 'null'] },
+        language: { type: 'string' },
+        pois: { type: 'array' },
+        status: { type: 'string' },
+        error: { type: ['string', 'null'] },
+        analysisAttempts: { type: 'number' },
+    },
+    required: ['filePath', 'fileChecksum', 'language', 'pois', 'status', 'error', 'analysisAttempts'],
+};
+
+module.exports = { JsonSchemaValidator, ValidationError, POI_SCHEMA, FILE_ANALYSIS_SCHEMA };
