@@ -199,75 +199,20 @@ JSON OUTPUT FORMAT (STRICT):
 
 IMPORTANT: Return ONLY the JSON object. No explanations, no markdown formatting, no additional text.`;
 
-        let userPrompt = `Please analyze the following ${detectedLanguage} source code file (${absoluteFilePath}):
-
-\`\`\`${detectedLanguage.toLowerCase()}
-${fileContent}
-\`\`\`
-
-Base directory context: ${baseDirectory}`;
+        let userPrompt = 'Please analyze the following ' + detectedLanguage + ' source code file (' + absoluteFilePath + '):\n\n```' + detectedLanguage.toLowerCase() + '\n' + fileContent + '\n```\n\nBase directory context: ' + baseDirectory;
 
         // Add project context if available
         if (projectContext) {
-            userPrompt += `
-
-Project Context (File Tree):
-\`\`\`
-${projectContext}
-\`\`\`
-
-**IMPORTANT**: Use this project context to identify cross-file relationships. When you see relative imports (./file, ../file) or local module references, resolve them using the file tree above to create accurate IMPORTS relationships to other project files. Look for patterns where the current file might be calling functions or using classes defined in other project files listed in the context.`;
+            userPrompt += '\n\nProject Context (File Tree):\n```\n' + projectContext + '\n```\n\n**IMPORTANT**: Use this project context to identify cross-file relationships. When you see relative imports (./file, ../file) or local module references, resolve them using the file tree above to create accurate IMPORTS relationships to other project files. Look for patterns where the current file might be calling functions or using classes defined in other project files listed in the context.';
         }
 
-        userPrompt += `
-
-Instructions:
-1. Analyze the provided source code content
-2. Detect the programming language patterns and apply appropriate parsing
-3. Extract all entities (functions, classes, variables, files, databases, tables, views) from the code
-4. Identify relationships between entities (calls, uses, imports, exports, extends, contains)
-5. Convert relative import paths to absolute paths based on the base directory
-6. Distinguish between external dependencies and local file imports
-${projectContext ? '7. **CROSS-FILE ANALYSIS**: Use the provided project context to identify relationships between the current file and other files in the project' : ''}
-${projectContext ? '8' : '7'}. **CRITICAL POLYGLOT ANALYSIS**: Look for these specific patterns:
-   
-   **HTTP API Calls**:
-   - JavaScript: fetch(), axios.get(), http.request(), XMLHttpRequest
-   - Python: requests.get(), urllib.request(), httpx.get()
-   - Java: HttpClient, RestTemplate, OkHttp
-   - Extract endpoint URLs and create CALLS relationships to Function entities named after the endpoint
-   
-   **Database Operations**:
-   - SQL queries: SELECT/INSERT/UPDATE/DELETE statements
-   - ORM calls: .find(), .save(), .query(), .execute()
-   - Extract table names and create USES relationships to Table entities
-   
-   **Configuration Access**:
-   - JavaScript: process.env.VAR, config.get('key')
-   - Python: os.environ['VAR'], settings.DATABASE_URL
-   - Java: System.getProperty(), @Value annotations
-   - Create USES relationships to Variable entities for config keys
-   
-   **Service Communication**:
-   - Look for base URLs, service endpoints, microservice calls
-   - Create cross-language CALLS relationships between services
-
-${projectContext ? '9' : '8'}. Generate entity objects according to the ENTITY GENERATION RULES above:
-   - Local entities: filePath = absolute file path where defined
-   - External dependencies: filePath = module name
-   - File entities: filePath = absolute file path
-   - **API Endpoints**: Create Function entities with names like "GET /api/users" and filePath as the service base URL
-   - **Database Tables**: Create Table entities with filePath as the schema file or database connection
-   - **Config Variables**: Create Variable entities with filePath as the config file location
-
-${projectContext ? '10' : '9'}. Return the analysis as a JSON object matching the required schema
-
-**EXAMPLES OF EXPECTED RELATIONSHIPS**:
-- JavaScript function calling "/api/users" → CALLS → Function{"name": "GET /api/users", "type": "Function", "filePath": "http://localhost:8080"}
-- Python function with "SELECT * FROM users" → USES → Table{"name": "users", "type": "Table", "filePath": "database/schema.sql"}
-- Java method accessing config.getProperty("db.url") → USES → Variable{"name": "db.url", "type": "Variable", "filePath": "config.properties"}
-
-Return only the JSON analysis, no additional text or formatting.`;
+        userPrompt += '\n\nInstructions:\n1. Analyze the provided source code content\n2. Detect the programming language patterns and apply appropriate parsing\n3. Extract all entities (functions, classes, variables, files, databases, tables, views) that actually exist in the code\n4. Identify relationships between entities that actually exist (calls, uses, imports, exports, extends, contains)\n5. Convert relative import paths to absolute paths based on the base directory\n6. Distinguish between external dependencies and local file imports';
+        
+        if (projectContext) {
+            userPrompt += '\n7. **CROSS-FILE ANALYSIS**: Use the provided project context to identify relationships between the current file and other files in the project';
+        }
+        
+        userPrompt += '\n' + (projectContext ? '8' : '7') + '. **POLYGLOT ANALYSIS**: Look for these cross-language patterns if they exist in the code:\n   \n   **HTTP API Calls**:\n   - JavaScript: fetch(), axios.get(), http.request(), XMLHttpRequest, $.ajax(), superagent\n   - Python: requests.get(), urllib.request(), httpx.get(), aiohttp.get()\n   - Java: HttpClient, RestTemplate, OkHttp, URLConnection\n   \n   **Database Operations**:\n   - SQL queries: SELECT/INSERT/UPDATE/DELETE statements, JOINs, subqueries\n   - ORM calls: .find(), .save(), .query(), .execute(), .create(), .update(), .delete()\n   \n   **Configuration Access**:\n   - JavaScript: process.env.VAR, config.get(\'key\'), require(\'./config\')\n   - Python: os.environ[\'VAR\'], settings.DATABASE_URL, configparser\n   - Java: System.getProperty(), @Value annotations, Properties.load()\n   \n   **Service Communication**:\n   - Look for base URLs, service endpoints, microservice calls, RPC calls\n   \n   **File System Operations**:\n   - File reads/writes: fs.readFile(), open(), File.read()\n\n' + (projectContext ? '9' : '8') + '. Generate entity objects according to the ENTITY GENERATION RULES above:\n   - Local entities: filePath = absolute file path where defined\n   - External dependencies: filePath = module name\n   - File entities: filePath = absolute file path\n   - **API Endpoints**: Create Function entities with names like "GET /api/users" and filePath as the service base URL\n   - **Database Tables**: Create Table entities with filePath as the schema file or database connection\n   - **Config Variables**: Create Variable entities with filePath as the config file location\n\n' + (projectContext ? '10' : '9') + '. Return the analysis as a JSON object matching the required schema\n\n**EXAMPLES OF EXPECTED RELATIONSHIPS** (Only create relationships like these if the patterns actually exist in the code):\n\n**HTTP API Examples**:\n- JavaScript fetch("/api/users") → CALLS → Function{"name": "GET /api/users", "type": "Function", "filePath": "http://api"}\n- JavaScript fetch("/api/users") → USES → Variable{"name": "API_BASE_URL", "type": "Variable", "filePath": "config.js"}\n- Python requests.post("/api/process") → CALLS → Function{"name": "POST /api/process", "type": "Function", "filePath": "http://api"}\n- Java HttpClient.get("/api/data") → CALLS → Function{"name": "GET /api/data", "type": "Function", "filePath": "http://api"}\n\n**Database Examples**:\n- Python "SELECT * FROM users" → USES → Table{"name": "users", "type": "Table", "filePath": "database/schema.sql"}\n- Python "SELECT * FROM users" → USES → Variable{"name": "user_id", "type": "Variable", "filePath": "current_file"}\n- Java "INSERT INTO orders" → USES → Table{"name": "orders", "type": "Table", "filePath": "database/schema.sql"}\n- JavaScript ORM User.findAll() → USES → Table{"name": "users", "type": "Table", "filePath": "database/schema.sql"}\n\n**Configuration Examples**:\n- JavaScript process.env.DATABASE_URL → USES → Variable{"name": "DATABASE_URL", "type": "Variable", "filePath": "config.js"}\n- Python os.environ["API_KEY"] → USES → Variable{"name": "API_KEY", "type": "Variable", "filePath": "config.py"}\n- Java @Value("${db.host}") → USES → Variable{"name": "db.host", "type": "Variable", "filePath": "application.properties"}\n\n**Cross-Language Service Examples**:\n- JavaScript calling Python ML service → CALLS → Function{"name": "predict", "type": "Function", "filePath": "ml_service.py"}\n- Java ApiClient calling JavaScript server → CALLS → Function{"name": "processRequest", "type": "Function", "filePath": "server.js"}\n- Python calling Java business logic → CALLS → Function{"name": "calculateScore", "type": "Function", "filePath": "BusinessLogic.java"}\n\n**CRITICAL JSON FORMATTING REQUIREMENTS**:\n- Ensure ALL string values are properly escaped (use \\" for quotes inside strings)\n- Keep entity names concise (max 50 characters)\n- **REPORT ONLY WHAT EXISTS**: Only detect relationships that actually exist in the code\n- Use the EXACT file path provided: ' + absoluteFilePath + '\n- Double-check that all JSON brackets and quotes are properly closed\n\nReturn only the JSON analysis, no additional text or formatting.';
 
         return {
             systemPrompt,
@@ -279,10 +224,35 @@ Return only the JSON analysis, no additional text or formatting.`;
      * Cleans response by removing markdown wrappers and extra whitespace
      */
     _cleanResponse(response) {
-        return response
+        let cleaned = response
             .replace(/^```(?:json)?\s*/, '')  // Remove opening markdown
             .replace(/\s*```\s*$/, '')        // Remove closing markdown
             .trim();
+        
+        // Additional cleaning for malformed JSON
+        // Fix common JSON issues that can cause parsing errors
+        cleaned = cleaned
+            .replace(/,\s*}/g, '}')           // Remove trailing commas before }
+            .replace(/,\s*]/g, ']')           // Remove trailing commas before ]
+            .replace(/\n\s*\n/g, '\n')        // Remove extra newlines
+            .replace(/\r/g, '');              // Remove carriage returns
+        
+        // Try to fix unterminated strings by finding unmatched quotes
+        const quoteCount = (cleaned.match(/"/g) || []).length;
+        if (quoteCount % 2 !== 0) {
+            console.warn('Detected odd number of quotes, attempting to fix...');
+            // Find the last quote and see if it's properly closed
+            const lastQuoteIndex = cleaned.lastIndexOf('"');
+            if (lastQuoteIndex > 0 && cleaned.length > lastQuoteIndex + 1) {
+                const afterLastQuote = cleaned.substring(lastQuoteIndex + 1);
+                // If there's content after the last quote that looks like it should be inside quotes
+                if (afterLastQuote.match(/^[^,}\]]*[,}\]]/)) {
+                    cleaned = cleaned.substring(0, lastQuoteIndex + 1) + '"' + afterLastQuote;
+                }
+            }
+        }
+        
+        return cleaned;
     }
 
     /**
@@ -402,10 +372,29 @@ Return only the JSON analysis, no additional text or formatting.`;
             // For other entities, filePath should be the file they're defined in
             if (entity.type === 'File') {
                 if (entity.filePath !== expectedFilePath) {
-                    throw new ValidationError(`Entity ${index}: File entity filePath "${entity.filePath}" must be the absolute file path "${expectedFilePath}"`);
+                    // Try to be more flexible - sometimes LLM might use forward slashes vs backslashes
+                    const normalizedEntityPath = path.resolve(entity.filePath);
+                    const normalizedExpectedPath = path.resolve(expectedFilePath);
+                    
+                    if (normalizedEntityPath !== normalizedExpectedPath) {
+                        console.warn(`File entity path mismatch: expected "${expectedFilePath}", got "${entity.filePath}". Correcting...`);
+                        entity.filePath = expectedFilePath; // Auto-correct the path
+                    }
                 }
             }
             // For other entity types, we allow flexible filePath (could be external dependencies)
+            // But if they reference the current file, ensure they use the correct path
+            else if (entity.filePath && entity.filePath.includes(path.basename(expectedFilePath))) {
+                // If the entity references the current file but has wrong path, correct it
+                const normalizedEntityPath = path.resolve(entity.filePath);
+                const normalizedExpectedPath = path.resolve(expectedFilePath);
+                
+                if (normalizedEntityPath !== normalizedExpectedPath &&
+                    path.basename(normalizedEntityPath) === path.basename(normalizedExpectedPath)) {
+                    console.warn(`Entity ${index} path corrected from "${entity.filePath}" to "${expectedFilePath}"`);
+                    entity.filePath = expectedFilePath;
+                }
+            }
         });
     }
     

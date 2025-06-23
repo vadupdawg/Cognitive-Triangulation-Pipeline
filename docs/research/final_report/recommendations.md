@@ -1,37 +1,32 @@
 # Recommendations
 
-Based on the comprehensive research and analysis, the following actions are recommended to build a new, resilient, and scalable code analysis pipeline. These recommendations are presented in order of priority.
+Based on the findings of the deep research, this document provides a set of actionable recommendations for the design and implementation of the "Cognitive Triangulation" code analysis pipeline.
 
-## 1. Adopt a Streaming-First Architecture with Apache Kafka
+## 1. For the `EntityScout` Agent
 
-*   **Action:** Immediately cease all development on the SQLite-based queuing system.
-*   **Action:** Provision an Apache Kafka cluster as the central data backbone for the pipeline. For development, this can be a single-broker Docker container. For production, a 3-broker cluster is the minimum recommendation for high availability.
-*   **Action:** Define a clear topic strategy using multiple topics for different event types (e.g., `code_analysis.file_discovered.v1`, `code_analysis.analysis_completed.v1`). This provides schema isolation and consumer decoupling.
+*   **Recommendation 1.1**: Implement `EntityScout` using a smaller, faster LLM (e.g., a distilled model or a model like GPT-3.5-Turbo). The primary goal is speed of scanning, not perfect accuracy.
+*   **Recommendation 1.2**: The prompts for `EntityScout` should be highly structured and use Chain-of-Thought (CoT) principles to guide the extraction of different entity types.
+*   **Recommendation 1.3**: `EntityScout` must be prompted to return its findings in a standardized JSON format (a "POI report"). This schema should be strictly enforced.
+*   **Recommendation 1.4**: A library of few-shot examples should be created for each programming language to be supported. These examples will be dynamically included in the prompts to improve accuracy.
+*   **Recommendation 1.5**: Implement a file chunking mechanism to handle large files that exceed the context window of the chosen LLM.
 
-## 2. Re-architect Agents as Kafka Producers and Consumers
+## 2. For the `RelationshipResolver` Agent
 
-*   **Action:** The `ScoutAgent` must be refactored to be a Kafka producer. As it discovers files, it should produce events directly to the `file_discovered` topic.
-*   **Action:** The `WorkerAgent` must be refactored to be a Kafka consumer, subscribing to the `file_discovered` topic as part of a consumer group.
-*   **Action:** The `GraphIngestorAgent` should be re-implemented as a Kafka consumer (preferably within a stream processing framework like Flink) that subscribes to the `analysis_completed` topic.
+*   **Recommendation 2.1**: Implement `RelationshipResolver` using a powerful, state-of-the-art LLM (e.g., GPT-4, Claude 3 Opus). The primary goal is accuracy of analysis.
+*   **Recommendation 2.2**: The core of the `RelationshipResolver` should be a hybrid system that uses vector embeddings for candidate generation and a powerful LLM for validation.
+    *   *Step 1*: Generate vector embeddings for all POIs from the `EntityScout` reports.
+    *   *Step 2*: Use vector similarity search to identify a list of potential relationships.
+    *   *Step 3*: For each potential relationship, send the relevant POIs to the powerful LLM for validation.
+*   **Recommendation 2.3**: Implement a "Cognitive Triangulation" strategy for validation. A combination of Multi-Model Consensus and LLM-as-Judge is recommended as the primary strategy. Metamorphic testing should be considered for a subset of findings as a further validation step.
+*   **Recommendation 2.4**: The `RelationshipResolver` must output a confidence score for each validated relationship, derived from the level of agreement in the triangulation process.
 
-## 3. Mandate Stream-Based File Processing
+## 3. For the `GraphBuilder` Agent
 
-*   **Action:** The `WorkerAgent`'s file processing logic must be rewritten to exclusively use `fs.createReadStream`. The use of `fs.readFile()` or `fs.readFileSync()` should be forbidden in the codebase for any potentially large file.
-*   **Action:** Implement a "paused" stream pattern in the `WorkerAgent` to provide back-pressure when interacting with the LLM API, ensuring the agent does not read from the file system faster than it can process the data.
+*   **Recommendation 3.1**: The `GraphBuilder` should be designed to be a simple, robust agent that consumes the validated graph data from the `RelationshipResolver`. Its primary responsibility is to interact with the Neo4j database.
+*   **Recommendation 3.2**: The process of populating the database must be idempotent. The agent should check for the existence of nodes and relationships before creating them to avoid duplicates.
+*   **Recommendation 3.3**: The `GraphBuilder` should have configurable rules for how to handle relationships with different confidence scores (e.g., it may only ingest relationships with a "high" confidence score).
 
-## 4. Implement a Stream Processing Layer with Apache Flink
+## 4. For the Overall Pipeline
 
-*   **Action:** For the `GraphIngestorAgent`, use Apache Flink to consume from the `analysis_completed` topic. This provides a robust framework for handling windowing, stateful operations, and resilient, idempotent writes to Neo4j.
-*   **Action:** Begin by creating a simple "pass-through" Flink job that reads from Kafka and writes to Neo4j, and then iterate to add more complex logic as needed.
-
-## 5. Enforce Data Contracts with a Schema Registry
-
-*   **Action:** Integrate a schema registry (e.g., Confluent Schema Registry) into the pipeline.
-*   **Action:** Define Avro or Protocol Buffers schemas for all event types.
-*   **Action:** All Kafka producers and consumers must serialize and deserialize messages according to these schemas. This eliminates the risk of "unbounded LLM output" and ensures data quality throughout the pipeline.
-
-## 6. Prioritize Filling Knowledge Gaps
-
-*   **Action:** Before beginning implementation, conduct a second, targeted research cycle to address the specific questions outlined in `docs/research/analysis/knowledge_gaps.md`. The highest priority should be given to understanding Kafka topic configuration and Flink/Node.js integration patterns.
-
-By following these recommendations, the team can build a modern, event-driven system that is not only capable of meeting the current demands but is also architected to scale and evolve for future requirements.
+*   **Recommendation 4.1**: A continuous evaluation framework should be established to measure the accuracy and performance of the pipeline over time. This should include a "ground truth" dataset of code with known entities and relationships.
+*   **Recommendation 4.2**: The next phase of research should focus on addressing the knowledge gaps identified in the `knowledge_gaps.md` document. This will be crucial for refining the design and ensuring the long-term success of the project.

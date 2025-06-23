@@ -1,31 +1,33 @@
-# Research Scope Definition
+# Research Scope Definition: Cognitive Triangulation Pipeline
 
-This research will focus on identifying, evaluating, and recommending a scalable, resilient, and streaming-based architecture for a high-performance code analysis pipeline. The scope is driven by the critical failures identified in the post-mortem report, specifically addressing the challenges of memory-intensiveness, inadequate queuing, and lack of data flow control.
+## 1. Project Goal
 
-The primary areas of investigation are:
+The primary goal of this research is to inform the function-level specifications for a new code analysis architecture named "Cognitive Triangulation." This pipeline must analyze source code to identify entities and their relationships **exclusively through the use of Large Language Models (LLMs)**, strictly avoiding traditional Abstract Syntax Tree (AST) parsers or any other deterministic parsing methods.
 
-1.  **Streaming Data Ingestion and Processing:**
-    *   Techniques for processing large files without loading them entirely into memory.
-    *   Evaluation of Node.js stream capabilities for I/O operations.
-    *   Strategies for handling data chunks and streaming them to external APIs (e.g., LLMs).
+## 2. Architectural Components in Scope
 
-2.  **Dedicated Message Brokers vs. Streaming Platforms:**
-    *   In-depth comparison of message queues like **Apache Kafka** and **RabbitMQ**.
-    *   Analysis of cloud-native solutions such as **AWS SQS** and **Google Pub/Sub**.
-    *   Evaluation of integrated streaming platforms like **Apache Flink** and **Apache Spark Streaming** for more complex processing needs.
-    *   Key criteria will include durability, ordering guarantees, throughput, latency, scalability, and operational complexity.
+The research will focus on the three core agents of the proposed architecture:
 
-3.  **Back-Pressure and Flow Control:**
-    *   Investigation of built-in back-pressure mechanisms within stream processing frameworks.
-    *   Architectural patterns for implementing back-pressure in systems using message brokers to ensure stability under variable load.
+*   **`EntityScout`**: A fast, shallow-pass agent designed to identify potential "Points of Interest" (POIs) such as function definitions, class declarations, variable assignments, and external calls (e.g., API calls, library imports).
+*   **`RelationshipResolver`**: A powerful, global-context agent that ingests all POI reports. Its main function is to "triangulate" these POIs to validate their existence and accurately determine the relationships between them (e.g., inheritance, function calls, data flow) across the entire codebase.
+*   **`GraphBuilder`**: An agent responsible for taking the validated entities and relationships from the `RelationshipResolver` and populating a Neo4j graph database with them.
 
-4.  **Resilient Data Handling and Error Management:**
-    *   Best practices for data schema validation (e.g., using Avro, Protobuf) across distributed components.
-    *   Designing robust error-handling pathways, including the use of Dead-Letter Queues (DLQs) for failed message processing.
-    *   Strategies for idempotent data ingestion into the graph database to prevent data duplication during retries.
+## 3. Key Research Areas
 
-5.  **Architectural Patterns:**
-    *   Analysis of the **Pipes and Filters** pattern for creating a decoupled and maintainable pipeline.
-    *   Exploration of **Event Sourcing** or **Change Data Capture (CDC)** as potential patterns for ensuring data consistency and auditability.
+The investigation will cover the following critical domains:
 
-The final output will be a set of actionable recommendations for a new architecture that directly remedies the flaws of the previous system and provides a solid foundation for future scalability.
+*   **LLM-based Entity Recognition**: State-of-the-art techniques for identifying code components without traditional parsers.
+*   **Cross-file Relationship Analysis**: Methods for LLMs to accurately infer relationships between code entities distributed across multiple files.
+*   **"Cognitive Triangulation" Strategies**: Exploration of multi-LLM, multi-pass, or varied-prompt strategies to enhance accuracy and mitigate risks like model hallucination.
+*   **Effective Prompt Engineering**: Best practices for structuring prompts tailored to complex, multi-stage code analysis tasks.
+*   **Challenges and Mitigation**: Identification of potential obstacles (e.g., context window limits, performance, ambiguity) and the formulation of concrete solutions.
+
+## 4. Out of Scope
+
+This research will **not** cover:
+
+*   The specific implementation details of the Neo4j schema (though the types of entities and relationships to be stored are in scope).
+*   The deployment, orchestration, or scaling infrastructure for the agent pipeline.
+*   The user interface or client-side applications that might consume the resulting graph data.
+*   Analysis of non-code artifacts like documentation, comments, or configuration files, unless they are directly referenced within the code in a way that is relevant to entity and relationship analysis (e.g., annotations).
+*   The use of any non-LLM-based code parsing tools or libraries.

@@ -1,0 +1,14 @@
+{
+  "pois": [
+    {
+      "name": "User",
+      "type": "Class",
+      "line": 4
+    },
+    {
+      "name": "add",
+      "type": "Function",
+      "line": 16
+    },
+  ]
+}

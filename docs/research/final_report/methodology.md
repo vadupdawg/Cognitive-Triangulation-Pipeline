@@ -1,35 +1,37 @@
 # Methodology
 
-This research was conducted using a structured, recursive self-learning approach designed to ensure both the breadth and depth of the findings. The process was divided into five distinct conceptual stages.
+This document outlines the methodology used to conduct the deep research for the "Cognitive Triangulation" code analysis pipeline. The research was structured to be systematic, recursive, and to provide a strong foundation for the creation of function-level specifications.
 
-## Stage 1: Initialization and Scoping
+## 1. Research Framework
 
-The research began by reviewing the primary research objective and the key contextual documents: the [`Mutual_Understanding_Document.md`](../../Mutual_Understanding_Document.md) and the [`constraints_and_anti_goals.md`](../../specifications/constraints_and_anti_goals.md). Based on this initial review, a set of foundational documents was created to guide the research:
-*   **Scope Definition:** To clearly define the boundaries of the research.
-*   **Key Questions:** To establish the central questions the research needed to answer.
-*   **Information Sources:** To identify potential sources of data.
+The research process followed a structured, multi-stage framework:
 
-## Stage 2: Initial Data Collection
+1.  **Initialization and Scoping**: This initial phase focused on clearly defining the boundaries and objectives of the research.
+    *   A `scope_definition.md` document was created to outline the project goals and the specific architectural components in scope.
+    *   A `key_questions.md` document was drafted to establish the central questions that would drive the investigation.
+    *   A `information_sources.md` document was created to identify the types of content and the primary search tools to be used.
 
-Broad research queries were formulated based on the key questions defined in Stage 1. These queries were executed using a general AI search tool (the Perplexity MCP). The findings from these queries were documented in the `primary_findings_part_1.md` file, with a focus on capturing direct answers and actionable information.
+2.  **Initial Data Collection**: This phase involved broad-based research to gather a wide range of information on the key topics.
+    *   The primary tool used was a general AI search engine, accessed via the `github.com/pashpashpash/perplexity-mcp` MCP tool.
+    *   A series of broad queries were formulated based on the key questions.
+    *   The findings were documented in a series of `primary_findings_part_N.md` files, with each file focusing on a specific research topic.
 
-## Stage 3: First-Pass Analysis and Gap Identification
+3.  **First-Pass Analysis and Gap Identification**: This phase focused on analyzing the initial findings to identify high-level patterns and, crucially, to identify areas where more research was needed.
+    *   The key patterns and recurring strategies were synthesized into an `identified_patterns.md` document.
+    *   A `knowledge_gaps.md` document was created to explicitly list the unanswered questions and potential contradictions that emerged from the research. This document is intended to drive the next, more targeted research cycle.
 
-The collected data was analyzed to identify high-level patterns, points of tension or contradiction, and, most importantly, critical knowledge gaps. This analysis was performed to understand the overall landscape of the problem and to identify the areas where the initial, broad research was insufficient. The results of this stage were captured in the `identified_patterns_part_1.md`, `contradictions_part_1.md`, and `knowledge_gaps.md` files. The `knowledge_gaps.md` document is the primary output of this stage and serves as the input for the next research cycle.
+4.  **Targeted Research Cycles (Future Work)**: This phase, which is a future step, will involve conducting deep-dive research into the specific questions identified in the `knowledge_gaps.md` document.
 
-## Stage 4: Targeted Research Cycles (Future Work)
+5.  **Synthesis and Final Report Generation**: This final phase involved synthesizing all the findings from the initial research into a cohesive final report.
+    *   An `executive_summary.md` was created to provide a high-level overview of the research and its key findings.
+    *   This `methodology.md` document was created to ensure the research process is transparent and repeatable.
+    *   The other components of the final report (e.g., `detailed_findings.md`, `recommendations.md`) were populated based on the documents created in the earlier phases.
 
-This stage was not performed in the initial research pass. The methodology prescribes that for each significant knowledge gap identified in Stage 3, a new, highly targeted research cycle should be initiated. This involves:
-1.  Formulating specific queries to address the knowledge gap.
-2.  Executing the queries and integrating the new findings into the research documents.
-3.  Re-analyzing the findings and refining the knowledge gaps.
-This recursive process continues until the knowledge gaps are sufficiently addressed or other constraints are met.
+## 2. Core Principles
 
-## Stage 5: Synthesis and Final Report Generation
+The research was guided by the following core principles:
 
-Once the research cycles are complete, the final stage is to synthesize all the validated findings into a cohesive whole. In this initial pass, this involved creating:
-*   An **Integrated Model:** A high-level architectural blueprint for the proposed system.
-*   **Key Insights:** A distillation of the most important and impactful findings.
-*   **Practical Applications:** A set of concrete, actionable recommendations for implementation.
-
-Finally, these synthesized documents were used to compile this final report, ensuring that the findings are presented in a clear, human-readable format.
+*   **Structured and Systematic**: The research was conducted in a structured manner, with clear phases and deliverables for each phase.
+*   **Recursive**: The process is designed to be recursive. The knowledge gaps identified in one phase become the research questions for the next phase.
+*   **Traceable**: All findings are documented and linked back to the key questions and information sources, ensuring that the entire research process is traceable.
+*   **Action-Oriented**: The ultimate goal of the research is to provide actionable insights that can directly inform the design and implementation of the "Cognitive Triangulation" pipeline.

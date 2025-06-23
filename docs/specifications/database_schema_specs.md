@@ -1,82 +1,86 @@
-# Database Schema Specifications
+# Database Schema Specifications (Fortified)
 
-This document defines the schema for the SQLite and Neo4j databases used in the code analysis pipeline, revised to align with the ground truth analysis of the `polyglot-test` directory.
+This document defines the schema for the SQLite and Neo4j databases. It is the single source of truth for all data persistence, reflecting the revised, database-centric architecture.
 
 ## 1. SQLite Database Schema
 
-The SQLite database manages the analysis pipeline's state, tracking files and storing raw analysis results before their ingestion into the Neo4j graph.
+The SQLite database manages the analysis pipeline's state, tracking files and storing all intermediate analysis results. It is the exclusive medium for data handoff between agents.
 
-### Tables
+### Table-- `files`
 
-#### `files`
-
-Stores information about each file discovered in the repository.
+Stores information about each discovered file.
 
 -   **Columns**
-    -   `id` -- INTEGER -- PRIMARY KEY -- The unique identifier for the file.
-    -   `file_path` -- TEXT -- NOT NULL -- UNIQUE -- The relative path to the file in the repository.
-    -   `language` -- TEXT -- The programming language of the file (e.g., 'SQL', 'Java', 'JavaScript', 'Python').
-    -   `last_modified` -- DATETIME -- The last modified timestamp of the file.
-    -   `status` -- TEXT -- The processing status ('pending', 'processing', 'completed', 'error').
-    -   `checksum` -- TEXT -- The SHA-256 checksum of the file content to detect changes.
+    -   `file_path` -- TEXT -- NOT NULL -- UNIQUE -- The relative path to the file.
+    -   `checksum` -- TEXT -- The SHA-256 checksum of the file content.
+    -   `language` -- TEXT -- The detected programming language.
+    -   `status` -- TEXT -- NOT NULL -- The processing status of the file. See Status Codes.
+    -   `error_message` -- TEXT -- Stores any error message associated with a FAILED status.
+    -   `last_processed` -- DATETIME -- Timestamp of the last processing attempt.
 
-#### `analysis_results`
+### Table-- `points_of_interest`
 
-Stores the raw JSON output from the Worker Agents.
+Stores all POIs discovered by the `EntityScout` agent.
 
 -   **Columns**
-    -   `id` -- INTEGER -- PRIMARY KEY -- The unique identifier for the analysis result.
-    -   `file_id` -- INTEGER -- Foreign key referencing the `files` table.
-    -   `worker_id` -- TEXT -- The identifier of the Worker Agent that performed the analysis.
-    -   `analysis_type` -- TEXT -- The type of analysis performed (e.g., 'code_structure').
-    -   `result` -- TEXT -- The JSON output from the analysis.
-    -   `created_at` -- DATETIME -- DEFAULT CURRENT_TIMESTAMP -- The timestamp of creation.
-    -   `processed` -- INTEGER -- DEFAULT 0 -- A flag to indicate if the result has been ingested into Neo4j (0 = no, 1 = yes).
+    -   `id` -- TEXT -- PRIMARY KEY -- The Unique POI Identifier (UPID).
+    -   `file_path` -- TEXT -- NOT NULL -- Foreign key to `files.file_path`.
+    -   `name` -- TEXT -- NOT NULL -- The name of the POI.
+    -   `type` -- TEXT -- NOT NULL -- The type string from the LLM (e.g., `FunctionDefinition`).
+    -   `start_line` -- INTEGER -- The starting line number.
+    -   `end_line` -- INTEGER -- The ending line number.
+    -   `confidence` -- REAL -- The LLM's confidence score.
+
+### Table-- `resolved_relationships`
+
+Stores the final, validated relationships discovered by the `RelationshipResolver` agent. This is the source data for the `GraphBuilder`.
+
+-   **Columns**
+    -   `id` -- INTEGER -- PRIMARY KEY AUTOINCREMENT
+    -   `source_poi_id` -- TEXT -- NOT NULL -- Foreign key to `points_of_interest.id`.
+    -   `target_poi_id` -- TEXT -- NOT NULL -- Foreign key to `points_of_interest.id`.
+    -   `type` -- TEXT -- NOT NULL -- The relationship type (e.g., `CALLS`).
+    -   `confidence` -- REAL -- The confidence score.
+    -   `explanation` -- TEXT -- The LLM-generated explanation.
+    -   `pass_type` -- TEXT -- The analysis pass that discovered it (`Intra-File`, `Intra-Directory`, `Global`).
+
+### Status Codes for `files.status`
+
+-- Code -- Description --
+-- --- -- --- --
+-- `PENDING` -- The file is discovered and waiting for analysis. --
+-- `PROCESSING` -- The file is currently being analyzed by an agent. --
+-- `COMPLETED_SUCCESS` -- The file was analyzed successfully by all stages. --
+-- `SKIPPED_FILE_TOO_LARGE` -- The file was skipped by `EntityScout`. --
+-- `FAILED_FILE_NOT_FOUND` -- The file could not be read from the filesystem. --
+-- `FAILED_LLM_API_ERROR` -- An agent encountered a non-recoverable LLM API error. --
+-- `FAILED_VALIDATION_ERROR` -- An agent's LLM response was invalid after all retries. --
 
 ## 2. Neo4j Graph Schema
 
-The Neo4j graph stores the codebase as a structured graph, enabling complex queries about its architecture and dependencies.
+The Neo4j graph stores the codebase's semantic structure. The `GraphBuilder` agent is responsible for mapping data from SQLite to this schema.
 
 ### Node Labels
 
 -   **`File`** -- Represents a source code file.
     -   **Properties** -- `{ path: String, language: String, checksum: String }`
--   **`Database`** -- Represents a database instance.
-    -   **Properties** -- `{ name: String }`
--   **`Table`** -- Represents a database table.
-    -   **Properties** -- `{ name: String, schema: String }`
+-   **`Function`** -- Represents a function or method.
+    -   **Properties** -- `{ id: String, name: String, startLine: Integer, endLine: Integer }`
 -   **`Class`** -- Represents a class definition.
-    -   **Properties** -- `{ name: String, filePath: String }`
--   **`Function`** -- Represents a function, method, or SQL trigger.
-    -   **Properties** -- `{ name: String, signature: String, filePath: String }`
--   **`Variable`** -- Represents a structurally significant variable (e.g., module constant, class member).
-    -   **Properties** -- `{ name: String, scope: String, filePath: String }`
+    -   **Properties** -- `{ id: String, name: String, startLine: Integer, endLine: Integer }`
+-   **`Variable`** -- Represents a significant variable (e.g., constant, export).
+    -   **Properties** -- `{ id: String, name: String, startLine: Integer, endLine: Integer }`
 
 ### Relationship Types
 
--   **`CONTAINS`** -- A structural relationship indicating containment.
-    -   `(File)-[:CONTAINS]->(Class)`
-    -   `(File)-[:CONTAINS]->(Function)`
-    -   `(File)-[:CONTAINS]->(Variable)`
-    -   `(Class)-[:CONTAINS]->(Function)` -- (e.g., for methods)
-    -   `(Database)-[:CONTAINS]->(Table)`
+These are the only valid relationship types. The `GraphBuilder` must use these exact type strings.
 
--   **`CALLS`** -- Represents a function or method call.
-    -   `(Function)-[:CALLS]->(Function)`
-
--   **`IMPORTS`** -- Represents the importing of a module or library.
-    -   `(File)-[:IMPORTS]->(File)`
-    -   `(File)-[:IMPORTS]->(Variable)` -- (e.g., `const { x } = require('./utils')`)
-
--   **`EXPORTS`** -- Represents a module export.
-    -   `(File)-[:EXPORTS]->(Function)`
-    -   `(File)-[:EXPORTS]->(Class)`
-    -   `(File)-[:EXPORTS]->(Variable)`
-
--   **`EXTENDS`** -- Represents class inheritance.
-    -   `(Class)-[:EXTENDS]->(Class)`
-
--   **`USES`** -- A generic relationship for resource utilization.
-    -   `(Function)-[:USES]->(Table)` -- (e.g., SQL queries in code)
-    -   `(Function)-[:USES]->(Variable)` -- (e.g., using a config object)
-    -   `(Table)-[:USES]->(Table)` -- (e.g., Foreign Key constraints)
+-   `CONTAINS`
+-   `CALLS`
+-   `IMPORTS`
+-   `EXPORTS`
+-   `EXTENDS`
+-   `IMPLEMENTS`
+-   `DEPENDS_ON`
+-   `USES_DATA_FROM`
+-   `USES`

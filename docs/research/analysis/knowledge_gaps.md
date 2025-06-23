@@ -1,39 +1,39 @@
-# Critical Knowledge Gaps for Implementation
+# Knowledge Gaps and Contradictions
 
-The initial research phase has successfully identified high-level technologies and architectural patterns (Kafka, Flink, Node.js Streams). However, moving from this high-level design to a concrete implementation plan requires addressing several specific, practical questions. These knowledge gaps represent the next frontier for our research.
+This document outlines the key knowledge gaps, unanswered questions, and potential contradictions that have been identified after the initial phase of research. These gaps will form the basis for the next cycle of targeted research.
 
-## 1. Kafka Topic Architecture and Configuration
+## 1. Quantifying the Accuracy-Performance Trade-off
 
-*   **Gap:** The optimal number of partitions for our topics is unknown. How do we balance parallelism with overhead?
-*   **Gap:** What is the correct replication factor for our use case to ensure durability without excessive resource consumption?
-*   **Gap:** What are the best practices for designing the topic structure? Should we use a single topic for all events, or separate topics for `file_discovered`, `analysis_completed`, etc.? What are the trade-offs?
-*   **Gap:** How should we configure message retention and log compaction for each topic?
+*   **Gap**: The research has confirmed the trade-off between smaller, faster models and larger, more powerful models. However, there is a lack of quantitative data on *how much* accuracy is lost for a given increase in speed.
+*   **Question**: For the task of code entity recognition, what is the measurable difference in accuracy (e.g., precision and recall) between a model like `GPT-4-Turbo` and a smaller, faster model like `GPT-3.5-Turbo` or a distilled model?
+*   **Next Step**: Design a targeted search to find benchmarks or case studies that have compared different LLM sizes for code analysis tasks.
 
-## 2. Flink and Node.js Integration
+## 2. Optimal Context Chunking Strategies
 
-*   **Gap:** How does a Node.js application interact with a Flink cluster? The primary Flink APIs are Java/Scala. Do we need to use Flink's SQL Client, or is there a recommended pattern for submitting and managing jobs from a Node.js backend?
-*   **Gap:** What are the practical steps for deploying a Flink job that consumes from a Kafka topic and is managed or triggered by a Node.js service?
+*   **Gap**: "Context chunking" is a widely cited technique, but there is little specific guidance on the *optimal* way to chunk code for relationship analysis.
+*   **Question**: Is it more effective to chunk by file, by class, or by some other semantic boundary? How does the chunking strategy affect the accuracy of relationship detection?
+*   **Next Step**: Research different code chunking strategies for LLM context management. Look for studies that compare different methods.
 
-## 3. Streaming Data to the LLM
+## 3. Scalability of Vector Embedding Search
 
-*   **Gap:** The LLM API may not support streaming requests. What is the most resilient pattern for handling this?
-    *   **Option A: Chunking in the Worker.** The Node.js `WorkerAgent` reads the file in chunks and sends multiple, smaller requests to the LLM. How do we reassemble the full analysis on the other side?
-    *   **Option B: Temporary Storage.** The `WorkerAgent` streams the file to a temporary location (e.g., S3 bucket), and then passes a reference to the LLM. Is this viable? What are the security and cleanup implications?
-*   **Gap:** How do we handle LLM rate limits in a streaming context? A robust, configurable rate-limiting mechanism is needed in the `WorkerAgent`.
+*   **Gap**: Using vector embeddings to find candidate relationships is a promising strategy. However, the scalability of this approach for very large codebases (millions of lines of code) is unclear.
+*   **Question**: What are the performance characteristics of performing a similarity search across millions of POI embeddings? What are the best database technologies or indexing strategies for this task (e.g., specialized vector databases)?
+*   **Next Step**: Research best practices for large-scale vector similarity search and the tools available.
 
-## 4. Schema Management and Data Validation
+## 4. Cost-Benefit Analysis of "Cognitive Triangulation"
 
-*   **Gap:** The post-mortem identified "unbounded LLM output" as a risk. How do we enforce a strict schema on the data flowing through Kafka?
-*   **Gap:** What are the practical differences between using a schema registry (like Confluent Schema Registry) with Avro/Protobuf versus performing manual JSON schema validation at the consumer level? What is the performance and resilience impact of each choice?
+*   **Gap**: The research has identified several powerful techniques for "Cognitive Triangulation" (multi-model, LLM-as-judge, metamorphic testing). However, each of these adds significant computational cost and latency.
+*   **Question**: What is the cost-benefit analysis of each triangulation technique? For example, does using three models instead of two provide a significant enough increase in accuracy to justify the extra cost?
+*   **Next Step**: Search for case studies or analyses that discuss the cost-effectiveness of different LLM validation strategies.
 
-## 5. Idempotent Ingestion into Neo4j
+## 5. Handling Non-Local and Dynamic Relationships
 
-*   **Gap:** The `GraphIngestorAgent` must be idempotent to prevent data duplication on retries. What is the most efficient Cypher query pattern to achieve this?
-*   **Gap:** Should we use `MERGE` on every node and relationship? Are there more performant bulk-loading strategies in Neo4j that still guarantee idempotency? For example, using constraints and `UNWIND` with conditional creation.
+*   **Gap**: The current research has focused on relatively direct relationships (e.g., direct function calls, inheritance). It is less clear how an LLM-only approach would handle more complex, non-local, or dynamic relationships.
+*   **Question**: How can this architecture detect relationships that are established through reflection, dependency injection frameworks, or other forms of indirection that are not immediately obvious from a static analysis of the code?
+*   **Next Step**: Formulate a targeted search on "LLM code analysis for dynamic languages" or "detecting indirection with LLMs".
 
-## 6. Deployment and Operational Concerns
+## 6. Contradiction: LLMs vs. "Graph-Based Representations"
 
-*   **Gap:** What is a realistic, lightweight local development setup for this architecture (Kafka, Flink, Neo4j)? Docker Compose is a likely candidate, but specific configurations are needed.
-*   **Gap:** What are the key metrics we need to monitor for each component of this pipeline (e.g., Kafka consumer lag, Flink checkpoint duration, end-to-end latency)?
-
-Addressing these gaps will be the focus of the next, targeted research cycle.
+*   **Potential Contradiction**: Some research papers on "graph-based representations" for code analysis still rely on traditional ASTs to build the initial graph. This seems to contradict the project's core constraint of avoiding all deterministic parsers.
+*   **Clarification Needed**: How can a graph representation of code be built *without* first parsing the code into an AST? Can an LLM be used to generate the graph structure directly from the raw code?
+*   **Next Step**: A specific search is needed to find techniques for generating code graphs directly with LLMs, bypassing the need for a traditional AST parser.

@@ -1,28 +1,33 @@
-# Final Report: Table of Contents
+# Table of Contents
 
-This document provides the structure and links to all sections of the final research report.
+This document provides the structure for the final research report on the "Cognitive Triangulation" code analysis pipeline.
 
 ## 1. Introduction
 
-*   [Executive Summary](./executive_summary.md)
-*   [Methodology](./methodology.md)
+*   [Executive Summary](executive_summary.md)
+*   [Methodology](methodology.md)
 
-## 2. Research Findings and Analysis
+## 2. Detailed Findings
 
-*   [Detailed Findings](./detailed_findings_part_1.md)
-*   [In-Depth Analysis](./in_depth_analysis_part_1.md)
+*   [Detailed Findings, Part 1: LLM-based Code Entity Recognition](detailed_findings_part_1.md)
+*   [Detailed Findings, Part 2: Relationship Analysis and Triangulation](detailed_findings_part_2.md)
 
-## 3. Key Insights and Recommendations
+## 3. Analysis and Synthesis
 
-*   [Key Insights](../../synthesis/key_insights.md)
-*   [Practical Applications and Recommendations](../../synthesis/practical_applications.md)
-*   [Recommendations](./recommendations.md)
+*   [Identified Patterns](../analysis/identified_patterns.md)
+*   [Knowledge Gaps and Contradictions](../analysis/knowledge_gaps.md)
 
-## 4. Supporting Documentation
+## 4. Recommendations and Future Work
 
-*   [Initial Research Scope](./../initial_queries/scope_definition.md)
-*   [Key Research Questions](./../initial_queries/key_questions.md)
-*   [Identified Patterns](./../analysis/identified_patterns_part_1.md)
-*   [Contradictions and Discrepancies](./../analysis/contradictions_part_1.md)
-*   [Critical Knowledge Gaps](./../analysis/knowledge_gaps.md)
-*   [References](./references.md)
+*   [Recommendations](recommendations.md)
+
+## 5. Appendices
+
+*   [Initial Queries](../initial_queries/)
+    *   [Scope Definition](../initial_queries/scope_definition.md)
+    *   [Key Questions](../initial_queries/key_questions.md)
+    *   [Information Sources](../initial_queries/information_sources.md)
+*   [Primary Findings](../data_collection/)
+    *   [Primary Findings, Part 1](../data_collection/primary_findings_part_1.md)
+    *   [Primary Findings, Part 2](../data_collection/primary_findings_part_2.md)
+    *   [Primary Findings, Part 3](../data_collection/primary_findings_part_3.md)

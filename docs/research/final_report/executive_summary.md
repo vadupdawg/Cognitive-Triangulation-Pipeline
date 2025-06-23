@@ -1,16 +1,33 @@
 # Executive Summary
 
-This research was commissioned to address the catastrophic architectural failure of the code analysis pipeline, as detailed in the post-mortem report dated 2025-06-22. The previous system's design, which relied on in-memory file processing and a relational database as a makeshift queue, was fundamentally non-scalable, memory-intensive, and brittle. It was incapable of handling the demands of a real-world, large-scale codebase.
+This report details the findings of a deep research investigation into the "Cognitive Triangulation" code analysis pipeline, an architecture designed to analyze source code exclusively through the use of Large Language Models (LLMs), without relying on traditional AST parsers. The research was conducted to inform the function-level specifications for the three core agents of this pipeline: `EntityScout`, `RelationshipResolver`, and `GraphBuilder`.
 
-This report presents the findings of a deep, structured research effort into modern, streaming-based architectures. The research process involved analyzing the initial failure, identifying key technological pillars, and performing targeted research cycles to fill critical implementation knowledge gaps.
+The research has confirmed the viability of an all-LLM approach and has identified several key patterns and strategies that will be foundational to the architecture.
 
-The primary findings of this research are threefold:
-1.  **A Streaming Backbone is Essential:** The use of a distributed, persistent log like **Apache Kafka** is the correct foundation for the pipeline, replacing the inadequate SQLite queue and providing durability, scalability, and natural back-pressure.
-2.  **File Processing Must Be Streamed:** The practice of reading entire files into memory must be abandoned. The use of **Node.js Streams** (`fs.createReadStream`) is a non-negotiable requirement for all file I/O to ensure low, predictable memory usage.
-3.  **Advanced Processing Requires a Dedicated Framework:** For complex, stateful data transformations and resilient ingestion, a dedicated stream processing framework like **Apache Flink** is recommended over custom, brittle consumer logic.
+**Key Findings:**
 
-Based on these findings, this report recommends a new, fundamentally different architecture: a **decoupled, event-driven pipeline**. In this model, agents communicate asynchronously by producing and consuming events from Kafka topics. This design is inherently more resilient, scalable, and maintainable.
+1.  **Two-Tiered LLM Architecture is Optimal**: The most effective and efficient architecture will employ a two-tiered approach to LLM selection. A fast, lightweight model should be used for the initial, broad scan of the codebase (`EntityScout`), while a more powerful, heavyweight model should be used for the deep, contextual analysis of relationships (`RelationshipResolver`).
 
-While this research has established a robust high-level architecture, several specific implementation questions have been identified and documented in the `knowledge_gaps.md` file. These questions, covering areas like Kafka topic configuration and Flink-to-Node.js integration, should be the focus of the next phase of work leading to detailed technical specifications.
+2.  **Hybrid Context Management is Essential**: To overcome the context window limitations of LLMs, a hybrid approach is necessary. The research strongly suggests using vector embeddings for a fast, semantic search to identify *candidate* relationships, which are then validated by a powerful LLM that is given a more focused context.
 
-Adopting the recommendations in this report will mitigate the risks that led to the previous failure and provide a solid architectural foundation for a high-performance, scalable code analysis system.
+3.  **"Cognitive Triangulation" is a Multi-faceted Validation Strategy**: The core concept of "Cognitive Triangulation" is not a single technique, but a pattern of using multiple, diverse methods to validate LLM outputs. The most promising strategies are:
+    *   **Multi-Model Consensus**: Cross-referencing the outputs of different LLMs.
+    *   **LLM-as-Judge**: Using one LLM to critique the output of another.
+    *   **Metamorphic Testing**: Programmatically altering inputs to verify that outputs change in expected ways.
+
+4.  **Prompt Engineering is a Critical Discipline**: The success of the entire pipeline hinges on effective prompt engineering. The research highlights the importance of **Chain-of-Thought (CoT)** prompting to guide the LLM through complex reasoning, and **structured I/O** (primarily JSON) to ensure reliable communication between agents.
+
+**Key Knowledge Gaps for Future Research:**
+
+While the initial research has been fruitful, it has also identified several key areas that require further, more targeted investigation:
+
+*   A quantitative analysis of the **accuracy vs. performance trade-offs** between different LLM sizes for code analysis.
+*   Best practices for **code chunking strategies** for relationship analysis.
+*   The **scalability and cost-effectiveness** of different "Cognitive Triangulation" techniques.
+*   Methods for detecting **non-local and dynamic relationships** in code.
+
+**Conclusion and Next Steps:**
+
+This research provides a strong foundation for the development of the "Cognitive Triangulation" pipeline. The findings detailed in this report should be used to create the initial function-level specifications for the `EntityScout`, `RelationshipResolver`, and `GraphBuilder` agents.
+
+The next phase of work should focus on addressing the identified knowledge gaps through a targeted research cycle. This will provide the remaining details needed to build a robust, accurate, and scalable code analysis platform.

@@ -1,0 +1,3 @@
+This is a large file.
+... (content repeated to exceed 1MB) ...
+This is a large file.

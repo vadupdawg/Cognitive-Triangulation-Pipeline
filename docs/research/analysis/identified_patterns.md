@@ -1,40 +1,45 @@
-# Identified Architectural Patterns
+# Identified Patterns in LLM-based Code Analysis
 
-Based on the initial research into streaming platforms, file I/O, and processing frameworks, several key architectural patterns have emerged as best practices for building the new code analysis pipeline. These patterns directly address the failures of the previous system.
+This document synthesizes the key patterns and recurring strategies identified during the initial data collection phase. These patterns represent the most promising avenues for developing the "Cognitive Triangulation" pipeline.
 
-## 1. Pattern: Decoupled Pipeline via Persistent Log (The Kafka Model)
+## 1. Pattern: Two-Tiered LLM Architecture (Speed vs. Power)
 
-*   **Description:** This pattern uses a durable, append-only log (like Apache Kafka) as the central nervous system of the architecture. Producers (like the `ScoutAgent`) write events to the log, and consumers (like the `WorkerAgent` and `GraphIngestorAgent`) read from the log independently and at their own pace.
-*   **Benefits:**
-    *   **Decoupling:** Services do not need to know about each other; they only need to know about Kafka. This simplifies development and allows services to be scaled, updated, or replaced independently.
-    *   **Durability:** The log provides a persistent record of all events, protecting against data loss if a consumer fails.
-    *   **Replayability:** Data can be re-read from the log multiple times, which is invaluable for debugging, backfilling data, or running new types of analysis on historical data.
-    *   **Natural Back-Pressure:** The pull-based consumer model means consumers only take on work they can handle, inherently preventing them from being overwhelmed.
-*   **Relevance:** This directly replaces the brittle, polling-based SQLite queue with a robust, scalable, and resilient mechanism for data flow.
+A consistent pattern across the research is the use of a two-tiered approach to model selection, balancing speed and analytical depth.
 
-## 2. Pattern: Stream-Based File Processing
+*   **Tier 1 (Fast & Shallow)**: Use smaller, faster, and cheaper LLMs for broad, high-volume tasks. This directly corresponds to the `EntityScout` agent's role of performing a quick scan of all files to find POIs.
+*   **Tier 2 (Slow & Deep)**: Use large, powerful, and more expensive LLMs for complex, low-volume tasks that require deep reasoning and context. This aligns perfectly with the `RelationshipResolver` agent's role of analyzing a curated set of POIs to determine complex relationships.
 
-*   **Description:** This pattern mandates that files are never read into memory in their entirety. Instead, they are processed as a stream of smaller chunks using tools like Node.js's `fs.createReadStream`.
-*   **Benefits:**
-    *   **Low Memory Footprint:** Memory usage remains constant and low, regardless of the size of the file being processed.
-    *   **Scalability:** The system can process arbitrarily large files without crashing, removing the single greatest point of failure from the previous architecture.
-    *   **Responsiveness:** Processing can begin as soon as the first chunk of a file is available, rather than waiting for the entire file to be read.
-*   **Relevance:** This is the direct solution to the `WorkerAgent`'s critical flaw of using `fs.readFile()`.
+## 2. Pattern: Structured I/O via Prompt Engineering
 
-## 3. Pattern: Stateful Stream Processing (The Flink Model)
+A critical pattern for enabling a multi-agent pipeline is the enforcement of structured data formats (primarily JSON) for communication between agents.
 
-*   **Description:** This pattern involves using a stream processing framework (like Apache Flink) that can maintain state over time. For example, it could track the status of all files within a specific commit or build a dependency graph in-memory before flushing it to the database.
-*   **Benefits:**
-    *   **Complex Event Processing:** Enables sophisticated analysis that requires context beyond a single, independent event.
-    *   **Efficiency:** Performing stateful operations within the stream processor can be far more efficient than repeated queries against an external database.
-    *   **Real-time Insights:** Allows for the generation of complex, real-time insights from the data stream.
-*   **Relevance:** While not strictly necessary to fix the immediate failures, this pattern provides the architectural foundation for more advanced analysis features in the future, moving beyond simple file-by-file processing.
+*   **Method**: This is achieved through explicit instructions in the prompt, often referred to as "schema enforcement." Modern LLMs with "JSON mode" are particularly effective at this.
+*   **Application**:
+    *   `EntityScout` must be prompted to return its POI findings in a consistent, predefined JSON schema.
+    *   `RelationshipResolver` will also output its validated findings (the graph structure) in a clearly defined JSON format for the `GraphBuilder` to consume.
 
-## 4. Pattern: Dead-Letter Queue (DLQ) for Error Handling
+## 3. Pattern: Hybrid Context Management (Summarization + Embeddings)
 
-*   **Description:** When a message cannot be processed successfully after a certain number of retries, instead of being discarded or causing the consumer to crash, it is moved to a separate "dead-letter" queue.
-*   **Benefits:**
-    *   **Isolation:** A single problematic message cannot halt the entire pipeline.
-    *   **Auditability:** Failed messages are preserved for later inspection, debugging, and potential manual reprocessing.
-    *   **Resilience:** The main pipeline can continue to operate even when encountering poison pill messages.
-*   **Relevance:** This replaces the brittle error handling of the previous `GraphIngestorAgent` and provides a robust, industry-standard way to manage processing failures.
+For cross-file analysis, no single technique for managing context is sufficient. The emerging pattern is a hybrid approach.
+
+*   **Method**:
+    1.  **Embeddings for Candidate Generation**: Use vector embeddings of code entities (POIs) to perform a fast, semantic search and identify a list of *potential* relationships. This is a highly efficient way to narrow down the search space.
+    2.  **LLMs for Validation**: Use a powerful LLM to validate the candidate relationships identified by the embedding search. The LLM is given the specific POIs involved (and potentially summaries of their parent files/classes) to make a final, context-aware decision.
+*   **Relevance**: This hybrid model is a strong candidate for the core logic of the `RelationshipResolver`.
+
+## 4. Pattern: Multi-faceted Validation ("Triangulation")
+
+The concept of "Cognitive Triangulation" is not a single technique but a pattern of using multiple, diverse methods to validate LLM outputs and build confidence.
+
+*   **Key Facets**:
+    1.  **Multi-Model Consensus**: Cross-referencing the outputs of different LLMs (e.g., GPT vs. Claude vs. Gemini).
+    2.  **LLM-as-Judge**: Using one LLM to critique the output of another.
+    3.  **Metamorphic Testing**: Transforming the input in predictable ways to see if the output changes as expected.
+*   **Application**: The `RelationshipResolver` should implement a combination of these techniques to calculate a confidence score for each discovered relationship before it is sent to the `GraphBuilder`. This is the cornerstone of the entire architecture's reliability.
+
+## 5. Pattern: Decomposed, Chain-of-Thought (CoT) Prompting
+
+For complex reasoning tasks, the most effective prompting strategy is to break the problem down into smaller, sequential steps.
+
+*   **Method**: Instead of asking the LLM for the final answer in one go, the prompt guides it through a logical sequence of steps (e.g., "First, summarize this function. Second, identify its dependencies. Third, list any potential side effects.").
+*   **Relevance**: This pattern should be applied to the prompts for both the `EntityScout` (for complex entity extraction) and, most importantly, the `RelationshipResolver` (for validating complex relationships).
