@@ -18,7 +18,7 @@ class GraphBuilder {
         
         this.config = {
             batchSize: 500, // Larger batches for better performance
-            maxConcurrentBatches: 4, // Parallel batch processing
+            maxConcurrentBatches: 2, // Reduced to avoid deadlocks
             allowedRelationshipTypes: [
                 'CALLS', 'IMPLEMENTS', 'INHERITS_FROM', 'DEPENDS_ON',
                 'USES_DATA_FROM', 'CONTAINS', 'IMPORTS', 'EXPORTS',
@@ -164,23 +164,20 @@ class GraphBuilder {
 
         console.log(`Created ${batches.length} relationship batches`);
         
-        // Process batches in parallel
+        // Process batches SEQUENTIALLY to avoid Neo4j deadlocks
+        // Parallel processing was causing lock contention on shared nodes
         let totalProcessed = 0;
         let totalCreated = 0;
         
-        for (let i = 0; i < batches.length; i += this.config.maxConcurrentBatches) {
-            const batchGroup = batches.slice(i, i + this.config.maxConcurrentBatches);
+        for (let i = 0; i < batches.length; i++) {
+            const batch = batches[i];
+            console.log(`Relationship progress: ${i + 1}/${batches.length} batches processing...`);
             
-            const results = await Promise.all(
-                batchGroup.map(batch => this._runRelationshipBatchOptimized(batch))
-            );
+            const result = await this._runRelationshipBatchOptimized(batch);
+            totalProcessed += result.processed;
+            totalCreated += result.created;
             
-            results.forEach(result => {
-                totalProcessed += result.processed;
-                totalCreated += result.created;
-            });
-            
-            console.log(`Relationship progress: ${Math.min(i + this.config.maxConcurrentBatches, batches.length)}/${batches.length} batches completed`);
+            console.log(`Relationship progress: ${i + 1}/${batches.length} batches completed (${result.created} relationships created)`);
         }
         
         return { processed: totalProcessed, created: totalCreated };

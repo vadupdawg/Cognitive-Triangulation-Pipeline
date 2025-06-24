@@ -41,8 +41,26 @@ class EntityScout {
     }
 
     _generatePrompt(fileContent) {
+        // Detect file extension and language for specialized analysis
+        const fileExtension = this.currentFile ? path.extname(this.currentFile) : '';
+        const language = this._detectLanguage(fileExtension);
+        const languageSpecificInstructions = this._getLanguageSpecificInstructions(fileExtension);
+        const importDetectionRules = this._getImportDetectionRules(fileExtension);
+        
        return `
-You are an expert software engineer. Analyze the code contained within the <CODE_BLOCK> below to extract key entities.
+You are a universal code analysis AI specializing in ${language} code analysis with cross-language polyglot expertise.
+
+${languageSpecificInstructions}
+
+CRITICAL: CROSS-LANGUAGE POLYGLOT RELATIONSHIP DETECTION
+You MUST detect these advanced relationships:
+
+${importDetectionRules}
+
+POLYGLOT RELATIONSHIP PATTERNS:
+1. **HTTP Endpoints**: fetch(), axios(), requests.get() → Extract URLs → Create Function entities representing API endpoints
+2. **Database Queries**: SELECT, INSERT, ORM calls → Extract table names → Create Table entities  
+3. **Configuration Access**: process.env.X, config.X → Create Variable entities
 
 CRITICAL INSTRUCTIONS:
 - You MUST ONLY analyze the code inside the <CODE_BLOCK>.
@@ -73,7 +91,9 @@ DETAILED ENTITY TYPES TO EXTRACT:
      "startLine": 1,
      "endLine": 10,
      "confidence": 0.95,
-     "is_exported": false
+     "is_exported": false,
+     "imports": ["imported_module_name"],
+     "exports": ["exported_entity_name"]
    }
  ]
 }
@@ -83,10 +103,16 @@ REQUIREMENTS:
 - startLine and endLine MUST be valid line numbers (integers >= 1).
 - confidence MUST be a decimal between 0 and 1.
 - type MUST be one of: Function, Class, Variable, File, Database, Table, View.
-- is_exported MUST be true if the entity is exported/public (e.g., \`export\`, \`public\`), false otherwise.
+- is_exported MUST be true if the entity is exported/public (e.g., \`export\`, \`public\`)
 - ALWAYS create ONE File entity representing the entire source file.
+- For imports/exports: Add optional arrays for tracking dependencies
 - For SQL files: Extract Table and View entities from \`CREATE TABLE\`/\`CREATE VIEW\` statements.
 - If no entities are found, return: \`{"pois": []}\`
+
+OUTPUT QUALITY REQUIREMENTS:
+- Confidence scoring: 0.8+ for imports, 0.6+ for inferred relationships
+- Line-level precision: exact startLine/endLine for all entities
+- Cross-file awareness: detect relative paths in imports
 
 <CODE_BLOCK>
 ${fileContent}
@@ -288,6 +314,8 @@ Return ONLY the corrected JSON object.`;
     }
 
     async _processFile(filePath) {
+        // Set current file for language-specific prompt generation
+        this.currentFile = filePath;
         let fileChecksum = null;
         
         try {
@@ -397,6 +425,138 @@ Return ONLY the corrected JSON object.`;
                 throw error;
             }
         }
+    }
+
+    _detectLanguage(fileExtension) {
+        const languageMap = {
+            '.js': 'JavaScript',
+            '.jsx': 'JavaScript (React)',
+            '.ts': 'TypeScript', 
+            '.tsx': 'TypeScript (React)',
+            '.py': 'Python',
+            '.java': 'Java',
+            '.cpp': 'C++',
+            '.c': 'C',
+            '.h': 'C/C++ Header',
+            '.cs': 'C#',
+            '.php': 'PHP',
+            '.rb': 'Ruby',
+            '.go': 'Go',
+            '.sql': 'SQL'
+        };
+        return languageMap[fileExtension] || 'Unknown Language';
+    }
+
+    _getLanguageSpecificInstructions(fileExtension) {
+        const instructions = {
+            '.js': `
+JAVASCRIPT ANALYSIS SPECIALIZATION:
+- Focus on CommonJS (require/module.exports) and ES6 (import/export) patterns
+- Detect dynamic imports: import(), require(variable)
+- Identify async/await patterns and Promise chains
+- Extract React component patterns if present
+- Pay special attention to relative path imports (./, ../)`,
+            '.py': `
+PYTHON ANALYSIS SPECIALIZATION:
+- Focus on import statements, from...import patterns
+- Detect class inheritance and method definitions
+- Identify decorators (@decorator) and their targets
+- Extract function parameters and return types if typed
+- Pay attention to relative imports and package structure`,
+            '.java': `
+JAVA ANALYSIS SPECIALIZATION:  
+- Focus on package declarations and import statements
+- Detect class inheritance (extends) and interface implementation (implements)
+- Identify annotations (@Override, @Component, etc.)
+- Extract method signatures with access modifiers
+- Pay attention to static imports and wildcards`,
+            '.sql': `
+SQL ANALYSIS SPECIALIZATION:
+- Focus on CREATE TABLE, CREATE VIEW, CREATE PROCEDURE statements
+- Extract foreign key relationships and constraints
+- Identify stored procedures and functions
+- Detect triggers and their associated tables
+- Pay attention to schema references and cross-database calls`
+        };
+        return instructions[fileExtension] || 'General code analysis applies.';
+    }
+
+    _getImportDetectionRules(fileExtension) {
+        const rules = {
+            '.js': `
+JAVASCRIPT IMPORT/EXPORT DETECTION (CRITICAL):
+1. **CommonJS Patterns**:
+   - require('./file') → IMPORTS relationship to local file
+   - require('../utils') → IMPORTS relationship to parent directory file
+   - require('module') → IMPORTS relationship to npm package
+   - module.exports = → Mark entity as EXPORTED
+   - exports.name = → Mark specific export
+
+2. **ES6 Module Patterns**:
+   - import { x } from './file' → IMPORTS relationship + entity extraction
+   - import * as utils from '../lib' → IMPORTS relationship to library
+   - export function → Mark function as EXPORTED
+   - export default → Mark default export
+   - export { x, y } → Mark multiple exports
+
+3. **Dynamic Import Patterns**:
+   - import('./dynamic') → IMPORTS with dynamic flag
+   - import(\`./modules/\${name}\`) → IMPORTS with template literal
+   - require(variable) → IMPORTS with variable reference
+
+CONFIDENCE RULES:
+- Static imports/requires: confidence 0.9+
+- Dynamic imports: confidence 0.7+
+- Relative path resolution: confidence 0.8+`,
+            '.py': `
+PYTHON IMPORT DETECTION:
+1. **Standard Import Patterns**:
+   - import module → IMPORTS relationship to module
+   - from module import x → IMPORTS + specific entity reference
+   - from .relative import x → IMPORTS to local file
+   - import module as alias → IMPORTS with aliasing
+
+2. **Package Structure**:
+   - from ..parent import → IMPORTS from parent package
+   - from . import → IMPORTS from same package
+   - __all__ = [...] → Defines module exports
+
+CONFIDENCE RULES:
+- Absolute imports: confidence 0.9+
+- Relative imports: confidence 0.8+
+- Aliased imports: confidence 0.8+`,
+            '.java': `
+JAVA IMPORT DETECTION:
+1. **Import Patterns**:
+   - import package.Class → IMPORTS relationship to package
+   - import static → IMPORTS static members
+   - import package.* → IMPORTS wildcard package
+
+2. **Inheritance Patterns**:
+   - extends Class → INHERITANCE relationship
+   - implements Interface → IMPLEMENTATION relationship
+
+CONFIDENCE RULES:
+- Explicit imports: confidence 0.9+
+- Wildcard imports: confidence 0.7+
+- Inheritance: confidence 0.9+`,
+            '.sql': `
+SQL RELATIONSHIP DETECTION:
+1. **Table Relationships**:
+   - FOREIGN KEY → REFERENCES relationship between tables
+   - CREATE VIEW → Uses underlying tables
+   - JOIN operations → Table usage relationships
+
+2. **Procedure/Function Relationships**:
+   - CALL procedure → Execution relationship
+   - Function usage in queries → Usage relationship
+
+CONFIDENCE RULES:
+- Foreign keys: confidence 0.9+
+- View dependencies: confidence 0.8+
+- Procedure calls: confidence 0.8+`
+        };
+        return rules[fileExtension] || 'Standard entity detection rules apply.';
     }
 }
 
