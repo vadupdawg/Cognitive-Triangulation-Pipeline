@@ -1,91 +1,73 @@
-# User Stories
+# User Stories - Cognitive Triangulation Architecture
 
-This document provides a comprehensive set of user stories that define the functional requirements and acceptance criteria for the code analysis pipeline.
+## Epic 1: Entity Discovery and Extraction
 
----
+### Story 1.1: Comprehensive Entity Analysis
+*   **As a developer,** I want the system to analyze my codebase using EntityScout to extract all meaningful code entities (functions, classes, variables, files) so that I can understand the complete structure of my project.
+*   **Acceptance Criteria:**
+    *   EntityScout processes every source file identified in the target directory.
+    *   All entities are extracted with accurate type classification (Function, Class, Variable, File, Database, Table, View).
+    *   Entity extraction works across multiple programming languages (JavaScript, Python, Java, etc.).
+    *   Results are stored in SQLite with proper schema validation.
 
-### Persona: Software Architect
+### Story 1.2: Configurable File Discovery
+*   **As a developer,** I want to configure which files and directories are included or excluded from analysis so that I can focus on relevant code and ignore build artifacts or dependencies.
+*   **Acceptance Criteria:**
+    *   Given a configuration file specifying `node_modules/` and `*.md` to be excluded, EntityScout does not select any files from those locations or with those patterns.
+    *   The configuration supports both inclusion and exclusion patterns.
+    *   The system provides clear feedback about which files were included/excluded and why.
 
-**Story 1: Comprehensive Codebase Graph Generation**
+## Epic 2: Knowledge Graph Construction
 
-*   **As a** Software Architect,
-*   **I want to** generate a complete and accurate knowledge graph of a polyglot codebase,
-*   **so that** I can visualize and query high-level component dependencies and structural patterns.
+### Story 2.1: Accurate Graph Database Population
+*   **As a developer,** I want GraphBuilder to create a comprehensive Neo4j knowledge graph from the extracted entities so that I can visualize and query the relationships in my codebase.
+*   **Acceptance Criteria:**
+    *   All entities from EntityScout reports are accurately represented as nodes in Neo4j.
+    *   Initial relationships are created based on the entity extraction analysis.
+    *   The graph structure follows the defined schema with proper node types and relationship types.
+    *   The ingestion process handles large codebases efficiently without memory issues.
 
-**Acceptance Criteria:**
-*   Given a target directory, the pipeline completes without errors.
-*   The final Neo4j graph contains `File`, `Class`, `Function`, and `Variable` nodes for every corresponding entity in every source file identified by the `ScoutAgent`.
-*   The graph contains `IMPORTS`, `CALLS`, `USES`, `INHERITS_FROM`, and `HAS_METHOD` relationships that perfectly match the interactions within and between all source files.
-*   A Cypher query for all `(:Function)-[:CALLS]->(:Function)` relationships returns a count that is 100% identical to the actual number of function calls in the codebase.
-*   The system correctly identifies and creates relationships between entities in files of different languages.
+### Story 2.2: Schema Compliance and Data Integrity
+*   **As a data consumer,** I want to ensure that the Neo4j graph adheres to a consistent schema so that my queries and visualizations work reliably.
+*   **Acceptance Criteria:**
+    *   All nodes and relationships created by GraphBuilder adhere strictly to the defined types, properties, and constraints.
+    *   The ingestion process is idempotent: running GraphBuilder multiple times on the same input data results in the exact same final graph state.
+    *   Data integrity checks validate that no orphaned relationships or malformed nodes exist.
 
-**Story 2: Configurable Analysis Scope**
+## Epic 3: Cognitive Triangulation Analysis
 
-*   **As a** Software Architect,
-*   **I want to** configure the analysis pipeline to include or exclude specific directories and file types,
-*   **so that** I can focus the analysis on relevant source code and ignore vendor libraries, documentation, or test files.
+### Story 3.1: Enhanced Relationship Discovery
+*   **As a developer,** I want RelationshipResolver to use cognitive triangulation to discover and validate complex relationships between code entities that weren't apparent from initial analysis.
+*   **Acceptance Criteria:**
+    *   RelationshipResolver analyzes the existing graph and entity reports to identify additional relationships.
+    *   The system detects cross-file dependencies, API call patterns, and data flow relationships.
+    *   Relationship confidence scores are calculated and stored for quality assessment.
+    *   The cognitive triangulation process improves relationship accuracy by at least 25% over basic extraction.
 
-**Acceptance Criteria:**
-*   Given a configuration file specifying `node_modules/` and `*.md` to be excluded, the `ScoutAgent` does not select any files from those locations or with those patterns.
-*   The final graph contains zero nodes or relationships derived from the excluded files.
-*   The configuration supports glob patterns for both file paths and directory names.
-*   The pipeline produces a log detailing which files and directories were excluded based on the configuration.
+## Epic 4: Performance and Scalability
 
----
+### Story 4.1: Efficient Pipeline Processing
+*   **As a developer,** I want the cognitive triangulation pipeline to process large codebases efficiently so that I can analyze enterprise-scale projects.
+*   **Acceptance Criteria:**
+    *   EntityScout processes multiple files efficiently using proper file I/O patterns.
+    *   GraphBuilder uses optimized Neo4j transactions to handle large datasets.
+    *   RelationshipResolver completes analysis within reasonable time bounds for typical projects.
+    *   The intermediate SQLite database correctly stores all analysis results before graph construction begins.
 
-### Persona: New Developer
+## Epic 5: System Reliability and Monitoring
 
-**Story 3: Code Discovery and Usage Analysis**
+### Story 5.1: Pipeline Monitoring and Progress Tracking
+*   **As a developer,** I want real-time visibility into the cognitive triangulation pipeline progress so that I can monitor long-running analyses and identify any issues.
+*   **Acceptance Criteria:**
+    *   The system provides progress updates for each phase: EntityScout, GraphBuilder, RelationshipResolver.
+    *   WebSocket API delivers real-time status updates to connected clients.
+    *   Error handling provides clear diagnostic information when components fail.
+    *   The pipeline supports graceful shutdown and resume capabilities.
 
-*   **As a** New Developer,
-*   **I want to** query the knowledge graph to find the definition and all usages of a specific function,
-*   **so that** I can quickly understand its purpose and impact before making changes.
-
-**Acceptance Criteria:**
-*   Given a function name (e.g., `calculatePrice`), a Cypher query `MATCH (f:Function {name: 'calculatePrice'})<-[:CALLS]-(caller) RETURN caller` returns a node for every function that calls `calculatePrice`.
-*   The count of callers returned by the query is 100% identical to the count found by performing a project-wide search for the function's usage.
-*   The node for the `calculatePrice` function contains accurate properties for its file path, start and end line numbers, and defined parameters.
-
----
-
-### Persona: Automated Security Tool
-
-**Story 4: Reliable and Schema-Compliant Graph Consumption**
-
-*   **As an** Automated Security Tool,
-*   **I want to** consume a knowledge graph with a consistent and accurate schema,
-*   **so that** I can reliably traverse the graph to identify potential vulnerabilities like insecure data flow.
-
-**Acceptance Criteria:**
-*   The Neo4j database schema is validated against the documented project schema before and after ingestion.
-*   All nodes and relationships created by the `GraphIngestorAgent` adhere strictly to the defined types, properties, and constraints.
-*   The ingestion process is idempotent: running the `GraphIngestorAgent` multiple times on the same input data results in the exact same final graph state.
-*   A query tracing a variable from a known user input function to a database execution function correctly identifies the full, uninterrupted path if one exists in the source code.
-
----
-
-### Persona: Pipeline Operator
-
-**Story 5: Efficient and Scalable Processing**
-
-*   **As a** Pipeline Operator,
-*   **I want to** have the pipeline process files in parallel and ingest data in efficient batches,
-*   **so that** the analysis of a large codebase completes in a reasonable amount of time.
-
-**Acceptance Criteria:**
-*   The `WorkerAgent` module processes multiple files concurrently, utilizing available system resources.
-*   The `GraphIngestorAgent` uses batched transactions to load data into Neo4j, preventing memory overflows and ensuring transactional integrity.
-*   The pipeline provides clear logs indicating the start and completion of the scout, worker, and ingestor stages, including the number of files processed.
-*   The intermediate SQLite database correctly stores the structured output from all `WorkerAgents` before the ingestion stage begins.
-
-**Story 6: Accurate Cross-File Relationship Resolution**
-
-*   **As a** Pipeline Operator,
-*   **I want to** be certain that the system correctly resolves relationships between entities defined in different files,
-*   **so that** the graph provides a complete and accurate view of the entire system.
-
-**Acceptance Criteria:**
-*   The `GraphIngestorAgent` implements a two-pass ingestion strategy (nodes first, then relationships).
-*   The first pass successfully creates all `File`, `Class`, and `Function` nodes with 100% accuracy.
-*   The second pass successfully creates all `CALLS`, `USES`, and `IMPORTS` relationships that span across different files.
-*   A query for a function in `module_A.py` that calls a function in `module_B.py` correctly returns the `CALLS` relationship if and only if it exists in the code.
+### Story 5.2: Quality Assurance and Validation
+*   **As a developer,** I want the system to validate the quality and completeness of the generated knowledge graph so that I can trust the analysis results.
+*   **Acceptance Criteria:**
+    *   Comprehensive test suites validate each component: functional tests for each agent, acceptance tests for end-to-end scenarios.
+    *   The system detects and reports on unrelated files that don't connect to the main dependency graph.
+    *   Relationship quality metrics help identify areas where the analysis may be incomplete or uncertain.
+    *   Ground truth validation ensures the cognitive triangulation approach produces accurate results.

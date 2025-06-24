@@ -38,7 +38,7 @@ async function runTests() {
     console.log('   1. Scout discovers 15 code files (excludes README.md)');
     console.log('   2. Workers process files in parallel with real LLM analysis');
     console.log('   3. Analysis results stored in SQLite database');
-    console.log('   4. GraphIngestorAgent ingests from SQLite into Neo4j');
+    console.log('   4. GraphBuilder creates Neo4j knowledge graph from entity reports');
     console.log('   5. Validation confirms Neo4j contains at least target numbers');
     console.log('=' .repeat(80));
     

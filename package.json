@@ -1,14 +1,16 @@
 {
   "name": "aback",
   "version": "1.0.0",
-  "description": "Automated Backend Analysis and Code Knowledge",
-  "main": "src/index.js",
+  "description": "Automated Backend Analysis and Code Knowledge - Cognitive Triangulation Architecture",
+  "main": "src/main.js",
   "scripts": {
-    "start": "node src/utils/pipelineApi.js",
+    "start": "node src/main.js",
+    "start:api": "node src/utils/pipelineApi.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:polyglot": "node run-polyglot-tests.js",
+    "test:cognitive": "node run-tests.js",
     "check:polyglot": "node check-polyglot-results.js",
     "init-db": "node src/utils/initializeDb.js"
   },

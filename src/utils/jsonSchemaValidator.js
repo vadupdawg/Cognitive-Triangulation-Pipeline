@@ -1,5 +1,5 @@
 /**
- * JSON Schema Validator with Guardrails for WorkerAgent Responses
+ * JSON Schema Validator with Guardrails for EntityScout Responses
  * Ensures all LLM responses conform to exact schema requirements
  * Uses ABSOLUTE file paths for robust, unambiguous entity identification
  */
@@ -15,7 +15,7 @@ class ValidationError extends Error {
 
 class JsonSchemaValidator {
     constructor() {
-        // Valid entity types aligned with GraphIngestorAgent expectations
+        // Valid entity types aligned with GraphBuilder expectations
         this.validEntityTypes = new Set(['Function', 'Class', 'Variable', 'File', 'Database', 'Table', 'View']);
         
         // Valid relationship types - covers all expected relationships

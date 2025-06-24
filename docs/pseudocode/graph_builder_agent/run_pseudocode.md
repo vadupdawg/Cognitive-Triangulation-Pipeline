@@ -20,7 +20,7 @@ FUNCTION run()
     -- TDD ANCHOR-- TEST that the run process logs its start.
 
     -- Step 1-- Load all Point of Interest (POI) reports from the SQLite database.
-    -- These reports are the results from the EntityScoutAgent.
+    -- These reports are the results from EntityScout.
     LOG "Loading all POI reports from the database."
     poiReports = CALL this._loadAllPoiReports()
     -- TDD ANCHOR-- TEST that `_loadAllPoiReports` is called.

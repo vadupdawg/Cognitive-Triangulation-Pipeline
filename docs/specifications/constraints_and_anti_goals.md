@@ -1,19 +1,33 @@
-# Constraints and Anti-Goals
+# Constraints and Anti-Goals - Cognitive Triangulation Architecture
 
-This document outlines the explicit constraints on the system's design and features that are intentionally excluded from the project's scope. These are as important as the project goals for ensuring a focused and successful implementation.
+## Core Constraints
 
-## 1. Hard Constraints
+### 1. **AI-First Entity Extraction**
+*   **Constraint:** The core analysis of source code by EntityScout **must not** rely on Abstract Syntax Trees (ASTs), traditional parsers, or any similar deterministic parsing tools. The entity and relationship extraction must be performed by AI agents using Large Language Models.
+*   **Rationale:** This constraint ensures that the system can handle any programming language, even obscure or custom syntaxes, by leveraging the pattern recognition capabilities of modern LLMs rather than language-specific parsers.
 
-These are non-negotiable technical limitations that must be adhered to throughout the development process.
+### 2. **Cognitive Triangulation Methodology**
+*   **Constraint:** RelationshipResolver must implement true cognitive triangulation by analyzing entities from multiple perspectives and cross-validating relationships through different analytical approaches.
+*   **Rationale:** This ensures higher accuracy and confidence in detected relationships compared to single-pass analysis methods.
 
-*   **No AST / Traditional Parsers:** The core analysis of source code by the `WorkerAgents` **must not** rely on Abstract Syntax Trees (ASTs), traditional parsers, or any similar deterministic parsing tools. The entity and relationship extraction must be performed by AI agents analyzing the raw text of the source code files.
+### 3. **Polyglot Language Support**
+*   **Constraint:** The system must support analysis of codebases containing multiple programming languages without requiring language-specific configuration or parsers.
+*   **Rationale:** Modern software projects often use multiple languages, and the system should handle this complexity transparently.
 
-## 2. Anti-Goals (Out of Scope)
+## Anti-Goals
 
-These are features and capabilities that the project will deliberately **not** include, in order to maintain focus on the core objectives.
+### 1. **No Traditional Code Parsing**
+*   **Anti-Goal:** The system will **not** implement or rely on traditional AST-based code parsing for any programming language.
+*   **Justification:** This would limit the system to only supported languages and defeat the purpose of using AI for universal code understanding.
 
-*   **No Code Quality Analysis:** The system will not perform any analysis related to code quality, style, or adherence to best practices.
-*   **No Performance Profiling:** The system will not analyze the performance characteristics of the code.
-*   **No Security Vulnerability Scanning:** The system will not attempt to identify or report security vulnerabilities.
-*   **No Automated Refactoring:** The system will not suggest or perform any code refactoring. Its purpose is analysis, not modification.
-*   **No Real-time Visualization:** The system is designed as a batch-processing pipeline. It will not provide real-time updates or an integrated visualization front-end. The output is the populated Neo4j database.
+### 2. **No Real-Time Processing Requirements**
+*   **Anti-Goal:** The system is **not** designed for real-time code analysis or immediate feedback during development.
+*   **Justification:** The cognitive triangulation approach prioritizes accuracy over speed, making it suitable for comprehensive analysis rather than IDE integration.
+
+### 3. **No Code Modification or Generation**
+*   **Anti-Goal:** The system will **not** modify, refactor, or generate code. It is purely an analysis and knowledge extraction tool.
+*   **Justification:** The focus is on understanding existing code structures and relationships, not on code transformation.
+
+### 4. **No Dependency on External Build Systems**
+*   **Anti-Goal:** The analysis will **not** require the target codebase to be buildable or have functioning dependency resolution.
+*   **Justification:** Many legacy or incomplete codebases cannot be built, but still contain valuable structural information that should be extractable.

@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * Test Runner for Pipeline Validation
+ * Test Runner for Cognitive Triangulation Pipeline Validation
  * 
- * Runs the comprehensive test suite that defines what "working" means
- * and identifies what needs to be fixed in the current implementation.
+ * Runs the comprehensive test suite for the new cognitive triangulation architecture:
+ * EntityScout -> GraphBuilder -> RelationshipResolver
  */
 
 const { spawn } = require('child_process');
 const path = require('path');
 
-console.log('🧪 Pipeline Test Suite Runner');
-console.log('==============================');
+console.log('🧪 Cognitive Triangulation Pipeline Test Suite Runner');
+console.log('===================================================');
 
 // --- Helper Functions ---
 
@@ -52,57 +52,72 @@ async function runTestSuite(suite) {
 }
 
 /**
- * Runs all predefined test suites.
+ * Runs all predefined test suites for the cognitive triangulation architecture.
  */
 async function runAllTests() {
-  console.log('Running comprehensive tests to define what "working" means...\n');
+  console.log('Running cognitive triangulation tests to validate the new architecture...\n');
   console.log('🚀 Starting test execution...\n');
 
   const testSuites = [
     {
-      name: 'Unit Tests - Worker Agent Schema',
-      path: 'tests/unit/worker-agent-schema.test.js',
-      description: 'Tests WorkerAgent schema validation according to prompt requirements'
+      name: 'Functional Tests - EntityScout Agent',
+      path: 'tests/functional/entity_scout_agent.test.js',
+      description: 'Tests EntityScout agent for file discovery and entity extraction'
     },
     {
-      name: 'Unit Tests - Batch Processing',
-      path: 'tests/unit/batch-processing.test.js',
-      description: 'Tests high-performance batch processing for 200 concurrent workers'
+      name: 'Functional Tests - GraphBuilder Agent',
+      path: 'tests/functional/graph_builder_agent.test.js',
+      description: 'Tests GraphBuilder agent for creating nodes and relationships in Neo4j'
     },
     {
-      name: 'Integration Tests - Full Pipeline',
-      path: 'tests/integration/pipeline-integration.test.js',
-      description: 'Tests complete pipeline: Scout → Workers → Graph Ingestion'
+      name: 'Functional Tests - RelationshipResolver Agent',
+      path: 'tests/functional/relationship_resolver_agent.test.js',
+      description: 'Tests RelationshipResolver agent for cognitive triangulation analysis'
     },
     {
-      name: 'AMCP Comprehensive Analysis - DEFINITION OF WORKING',
-      path: 'tests/integration/amcp-comprehensive-analysis.test.js',
-      description: '🎯 DEFINES WHAT "WORKING" MEANS: 47 files → 1,689 nodes → 5,299 relationships'
+      name: 'Acceptance Tests - Comprehensive Graph Generation',
+      path: 'tests/acceptance/A-01_comprehensive_graph_generation.test.js',
+      description: '🎯 Validates complete pipeline generates comprehensive knowledge graph'
     },
     {
-      name: 'AMCP Pipeline Validation',
-      path: 'tests/integration/amcp-pipeline-validation.test.js',
-      description: 'Tests complete AMCP directory analysis: Scout → 50 Workers → SQLite → Neo4j'
+      name: 'Acceptance Tests - Ground Truth Validation',
+      path: 'tests/acceptance/A-01_ground_truth_validation.test.js',
+      description: 'Validates accuracy of generated relationships against ground truth'
     },
     {
-      name: 'AMCP Schema Validation',
-      path: 'tests/integration/amcp-schema-validation.test.js',
-      description: 'Manual file inspection and schema validation for AMCP directory'
+      name: 'Acceptance Tests - High Confidence Relationship Validation',
+      path: 'tests/acceptance/A-01_high_confidence_relationship_validation.test.js',
+      description: 'Tests high-confidence relationship detection and validation'
     },
     {
-      name: 'Neo4j Data Validation',
-      path: 'tests/integration/neo4j-data-validation.test.js',
-      description: 'Validates SQLite data perfectly matches Neo4j ingestion'
+      name: 'Acceptance Tests - Cognitive Triangulation',
+      path: 'tests/acceptance/A-02_cognitive_triangulation.test.js',
+      description: '🔗 CRITICAL: Tests cognitive triangulation methodology'
     },
     {
-      name: 'AMCP Import/Export Validation - FOCUSED RELATIONSHIP TESTING',
-      path: 'tests/integration/amcp-import-export-validation.test.js',
-      description: '🔗 CRITICAL: Validates import/export relationship detection across files and languages'
+      name: 'Acceptance Tests - Resiliency and Self-Correction',
+      path: 'tests/acceptance/A-02_resiliency_and_self_correction.test.js',
+      description: 'Tests system resilience and self-correction capabilities'
     },
     {
-      name: 'AMCP Production Pipeline - REAL LLM TESTING',
-      path: 'tests/integration/amcp-production-pipeline.test.js',
-      description: '🚀 PRODUCTION: Real DeepSeek LLM analysis of 5 AMCP files (2-3 minutes)'
+      name: 'Acceptance Tests - Idempotency',
+      path: 'tests/acceptance/A-03_idempotency.test.js',
+      description: 'Validates pipeline produces consistent results across runs'
+    },
+    {
+      name: 'Acceptance Tests - Advanced Code Discovery',
+      path: 'tests/acceptance/A-04_advanced_code_discovery.test.js',
+      description: 'Tests advanced code pattern and relationship discovery'
+    },
+    {
+      name: 'Acceptance Tests - Hierarchical Analysis Validation',
+      path: 'tests/acceptance/A-05_hierarchical_analysis_validation.test.js',
+      description: 'Validates hierarchical analysis and multi-level relationships'
+    },
+    {
+      name: 'Acceptance Tests - Unrelated Files Handling',
+      path: 'tests/acceptance/A-05_unrelated_files.test.js',
+      description: 'Tests proper handling of unrelated or standalone files'
     }
   ];
 
@@ -133,10 +148,10 @@ async function runAllTests() {
 
   if (failedCount > 0) {
     console.log('\n🔧 NEXT STEPS:');
-    console.log('The failing tests show what needs to be fixed to make the pipeline "work".');
+    console.log('The failing tests show what needs to be fixed in the cognitive triangulation pipeline.');
     console.log('Focus on fixing the issues identified in the test output above.');
   } else {
-    console.log('\n🎉 All tests passed! The pipeline is working correctly.');
+    console.log('\n🎉 All tests passed! The cognitive triangulation pipeline is working correctly.');
   }
 
   process.exit(failedCount > 0 ? 1 : 0);

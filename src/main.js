@@ -2,10 +2,9 @@ const { getDb, initializeDb } = require('./utils/sqliteDb');
 const neo4jDriverModule = require('./utils/neo4jDriver');
 const { getNeo4jDriver } = neo4jDriverModule;
 const { getDeepseekClient } = require('./utils/deepseekClient');
-const { getBatchProcessor } = require('./utils/batchProcessor');
-const ScoutAgent = require('./agents/ScoutAgent');
-const { WorkerAgent } = require('./agents/WorkerAgent');
-const GraphIngestorAgent = require('./agents/GraphIngestorAgent');
+const EntityScout = require('./agents/EntityScout');
+const GraphBuilder = require('./agents/GraphBuilder');
+const RelationshipResolver = require('./agents/RelationshipResolver');
 const config = require('./config');
 
 async function main() {
@@ -22,44 +21,29 @@ async function main() {
     const llmClient = getDeepseekClient();
 
     // Clear databases for fresh start
-    console.log('Clearing databases for fresh ingestion...');
+    console.log('Clearing databases for fresh start...');
     await clearDatabases(db, neo4jDriver);
     console.log('Databases cleared successfully.');
 
-    // Initialize agents
-    const scoutAgent = new ScoutAgent(db, targetDirectory);
-    const workerAgent = new WorkerAgent(db, llmClient, targetDirectory);
-    const graphIngestorAgent = new GraphIngestorAgent(db, neo4jDriverModule);
+    // Initialize cognitive triangulation agents
+    const entityScout = new EntityScout(db, llmClient, targetDirectory);
+    const graphBuilder = new GraphBuilder(db, neo4jDriver);
+    const relationshipResolver = new RelationshipResolver(db, llmClient);
 
-    // Run the pipeline
-    console.log('Starting Scout Agent...');
-    await scoutAgent.run();
-    console.log('Scout Agent finished.');
+    // Run the cognitive triangulation pipeline
+    console.log('Starting EntityScout Agent...');
+    await entityScout.run();
+    console.log('EntityScout Agent finished.');
 
-    console.log('Starting Worker Agent...');
-    // Initialize batch processor before starting workers
-    const batchProcessor = getBatchProcessor();
-    await batchProcessor.startWorkers();
-    console.log('Batch processor started.');
-    
-    // This is a simplified run loop for the worker.
-    const CONCURRENT_WORKERS = 50; // Number of parallel workers
-    const tasks = [];
-    for (let i = 0; i < CONCURRENT_WORKERS; i++) {
-        tasks.push(runWorker(workerAgent, `worker-${i + 1}`));
-    }
-    await Promise.all(tasks);
-    console.log('All workers finished.');
+    console.log('Starting GraphBuilder Agent...');
+    await graphBuilder.run();
+    console.log('GraphBuilder Agent finished.');
 
-    console.log('Flushing batch processor...');
-    await batchProcessor.forceFlush();
-    console.log('Batch processor flushed.');
+    console.log('Starting RelationshipResolver Agent...');
+    await relationshipResolver.run();
+    console.log('RelationshipResolver Agent finished.');
 
-    console.log('Starting Graph Ingestor Agent...');
-    await graphIngestorAgent.run();
-    console.log('Graph Ingestor Agent finished.');
-
-    console.log('Pipeline completed successfully.');
+    console.log('Cognitive triangulation pipeline completed successfully.');
   } catch (error) {
     console.error('An error occurred during the pipeline execution:', error);
     process.exit(1);
@@ -72,21 +56,13 @@ async function main() {
 }
 
 async function clearDatabases(db, neo4jDriver) {
-  // Reset batch processor to clear persistent state
-  console.log('Resetting batch processor...');
-  const batchProcessor = getBatchProcessor();
-  await batchProcessor.reset();
-  console.log('Batch processor reset.');
-
   // Clear SQLite database tables and reset auto-increment counters
   console.log('Clearing SQLite database tables...');
-  await db.run('DELETE FROM failed_work');
-  await db.run('DELETE FROM work_queue');
-  await db.run('DELETE FROM analysis_results');
+  await db.run('DELETE FROM entity_reports');
   await db.run('DELETE FROM files');
   
   // Reset auto-increment counters to ensure fresh start
-  await db.run('DELETE FROM sqlite_sequence WHERE name IN ("files", "analysis_results", "work_queue", "failed_work")');
+  await db.run('DELETE FROM sqlite_sequence WHERE name IN ("files", "entity_reports")');
   console.log('SQLite tables cleared and auto-increment counters reset.');
 
   // Clear Neo4j database
@@ -97,17 +73,6 @@ async function clearDatabases(db, neo4jDriver) {
     console.log('Neo4j database cleared.');
   } finally {
     await session.close();
-  }
-}
-
-async function runWorker(agent, workerId) {
-  while (true) {
-    const task = await agent.claimTask(workerId);
-    if (!task) {
-      console.log(`${workerId} found no more tasks.`);
-      break;
-    }
-    await agent.processTask(task);
   }
 }
 
