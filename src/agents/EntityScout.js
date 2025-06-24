@@ -197,34 +197,63 @@ Return ONLY the corrected JSON object.`;
     async run() {
         console.log(`Starting EntityScout for directory: ${this.targetDirectory}`);
         
-        // Discover all files in the target directory
         const files = await this._discoverFiles(this.targetDirectory);
         console.log(`Found ${files.length} files to process`);
         
+        const concurrencyLimit = 50;
+        const promises = [];
         let processedCount = 0;
         let successCount = 0;
         
-        for (const filePath of files) {
-            try {
-                console.log(`Processing file: ${filePath}`);
-                const result = await this._processFile(filePath);
-                console.log(`File ${filePath} result: status=${result.status}, error=${result.error}, pois=${result.pois.length}`);
-                
-                if (result.status === 'COMPLETED_SUCCESS') {
-                    successCount++;
-                } else {
-                    console.log(`File ${filePath} failed with status: ${result.status}, error: ${result.error}`);
-                }
-                processedCount++;
-                
-                if (processedCount % 10 === 0) {
-                    console.log(`Processed ${processedCount}/${files.length} files`);
-                }
-            } catch (error) {
-                console.error(`Error processing file ${filePath}:`, error.message);
-                console.error(`Stack trace:`, error.stack);
+        // Simple semaphore implementation
+        let activePromises = 0;
+        let resolveQueue = [];
+
+        const acquire = () => {
+            if (activePromises < concurrencyLimit) {
+                activePromises++;
+                return Promise.resolve();
             }
+            return new Promise(resolve => {
+                resolveQueue.push(resolve);
+            });
+        };
+
+        const release = () => {
+            activePromises--;
+            if (resolveQueue.length > 0) {
+                resolveQueue.shift()();
+            }
+        };
+
+        for (const filePath of files) {
+            const promise = (async () => {
+                await acquire();
+                try {
+                    console.log(`Processing file: ${filePath}`);
+                    const result = await this._processFile(filePath);
+                    console.log(`File ${filePath} result: status=${result.status}, error=${result.error}, pois=${result.pois.length}`);
+                    
+                    if (result.status === 'COMPLETED_SUCCESS') {
+                        successCount++;
+                    } else {
+                        console.log(`File ${filePath} failed with status: ${result.status}, error: ${result.error}`);
+                    }
+                } catch (error) {
+                    console.error(`Error processing file ${filePath}:`, error.message);
+                    console.error(`Stack trace:`, error.stack);
+                } finally {
+                    processedCount++;
+                    if (processedCount % 10 === 0 || processedCount === files.length) {
+                        console.log(`Processed ${processedCount}/${files.length} files`);
+                    }
+                    release();
+                }
+            })();
+            promises.push(promise);
         }
+        
+        await Promise.all(promises);
         
         console.log(`EntityScout completed: ${successCount}/${processedCount} files processed successfully`);
         return { processedCount, successCount };

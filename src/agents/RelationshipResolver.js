@@ -207,8 +207,9 @@ class RelationshipResolver {
         const pass0Results = { relationshipsFound: 0 };
         const pass1Results = { relationshipsFound: 0 };
         const pass2Results = { relationshipsFound: 0 };
+        const pass3Results = { relationshipsFound: 0 };
 
-        // Pass 0: Deterministic relationship detection (NEW)
+        // Pass 0: Deterministic relationship detection
         console.log('Running deterministic relationship detection...');
         const deterministicRelationships = await this._runDeterministicPass();
         if (deterministicRelationships.length > 0) {
@@ -217,46 +218,79 @@ class RelationshipResolver {
         }
         totalRelationshipsFound += pass0Results.relationshipsFound;
 
+        const concurrencyLimit = 50;
+        const promises = [];
+        
+        // Simple semaphore implementation
+        let activePromises = 0;
+        let resolveQueue = [];
+
+        const acquire = () => {
+            if (activePromises < concurrencyLimit) {
+                activePromises++;
+                return Promise.resolve();
+            }
+            return new Promise(resolve => {
+                resolveQueue.push(resolve);
+            });
+        };
+
+        const release = () => {
+            activePromises--;
+            if (resolveQueue.length > 0) {
+                resolveQueue.shift()();
+            }
+        };
+
         for (const dir of directories) {
-            console.log(`Processing directory: ${dir}`);
-            const poisInDir = await this._loadPoisForDirectory(dir);
+            const promise = (async () => {
+                await acquire();
+                try {
+                    console.log(`Processing directory: ${dir}`);
+                    const poisInDir = await this._loadPoisForDirectory(dir);
 
-            // Pass 1: Intra-file analysis for the current directory
-            const poisByFile = new Map();
-            for (const poi of poisInDir) {
-                if (!poisByFile.has(poi.file_id)) {
-                    poisByFile.set(poi.file_id, []);
-                }
-                poisByFile.get(poi.file_id).push(poi);
-            }
-            for (const poisInFile of poisByFile.values()) {
-                const relationships = await this._runIntraFilePass(poisInFile);
-                if (relationships.length > 0) {
-                    this.persistRelationships(relationships);
-                    pass1Results.relationshipsFound += relationships.length;
-                }
-            }
+                    // Pass 1: Intra-file analysis
+                    const poisByFile = new Map();
+                    for (const poi of poisInDir) {
+                        if (!poisByFile.has(poi.file_id)) {
+                            poisByFile.set(poi.file_id, []);
+                        }
+                        poisByFile.get(poi.file_id).push(poi);
+                    }
+                    for (const poisInFile of poisByFile.values()) {
+                        const relationships = await this._runIntraFilePass(poisInFile);
+                        if (relationships.length > 0) {
+                            this.persistRelationships(relationships);
+                            pass1Results.relationshipsFound += relationships.length;
+                        }
+                    }
 
-            // Pass 2: Intra-directory analysis for the current directory
-            const poisByFilePath = new Map();
-             for (const poi of poisInDir) {
-                if (!poisByFilePath.has(poi.path)) {
-                    poisByFilePath.set(poi.path, []);
+                    // Pass 2: Intra-directory analysis
+                    const poisByFilePath = new Map();
+                    for (const poi of poisInDir) {
+                        if (!poisByFilePath.has(poi.path)) {
+                            poisByFilePath.set(poi.path, []);
+                        }
+                        poisByFilePath.get(poi.path).push(poi);
+                    }
+                    const { relationships } = await this._runIntraDirectoryPass(dir, poisByFilePath);
+                    if (relationships.length > 0) {
+                        this.persistRelationships(relationships);
+                        pass2Results.relationshipsFound += relationships.length;
+                    }
+                } finally {
+                    release();
                 }
-                poisByFilePath.get(poi.path).push(poi);
-            }
-            const { relationships } = await this._runIntraDirectoryPass(dir, poisByFilePath);
-            if (relationships.length > 0) {
-                this.persistRelationships(relationships);
-                pass2Results.relationshipsFound += relationships.length;
-            }
+            })();
+            promises.push(promise);
         }
+
+        await Promise.all(promises);
         
         totalRelationshipsFound += pass1Results.relationshipsFound + pass2Results.relationshipsFound;
 
         // Pass 3: Global pass
         console.log('Running global relationship pass...');
-        const pass3Results = { relationshipsFound: 0 };
         const globalRelationships = await this._runGlobalPass();
         if (globalRelationships.length > 0) {
             this.persistRelationships(globalRelationships);
@@ -266,7 +300,7 @@ class RelationshipResolver {
 
         const summary = {
             totalRelationshipsFound,
-            pass0: pass0Results, // NEW
+            pass0: pass0Results,
             pass1: pass1Results,
             pass2: pass2Results,
             pass3: pass3Results,
