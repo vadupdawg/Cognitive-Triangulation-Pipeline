@@ -52,4 +52,30 @@ class DatabaseManager {
     }
 }
 
-module.exports = DatabaseManager;
+// Global database manager instance
+let globalDbManager = null;
+
+/**
+ * Initialize the global database connection
+ */
+async function initializeDb() {
+    const dbPath = process.env.SQLITE_DB_PATH || './database.db';
+    globalDbManager = new DatabaseManager(dbPath);
+    globalDbManager.initializeDb();
+}
+
+/**
+ * Get the global database connection
+ */
+async function getDb() {
+    if (!globalDbManager) {
+        throw new Error('Database not initialized. Call initializeDb() first.');
+    }
+    return globalDbManager.getDb();
+}
+
+module.exports = {
+    DatabaseManager,
+    initializeDb,
+    getDb
+};

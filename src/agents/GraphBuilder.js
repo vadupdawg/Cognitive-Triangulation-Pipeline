@@ -12,105 +12,21 @@ const DatabaseManager = require('../utils/sqliteDb');
  */
 class GraphBuilder {
     /**
-     * @param {Object} config - Configuration object
-     * @param {string} config.databasePath - Path to SQLite database
-     * @param {string} config.neo4jUri - Neo4j connection URI
-     * @param {string} config.neo4jUser - Neo4j username
-     * @param {string} config.neo4jPassword - Neo4j password
-     * @param {number} config.batchSize - Batch size for database operations (default: 100)
-     * @param {string[]} config.allowedRelationshipTypes - Allowed relationship types for security
+     * @param {Object} db - SQLite database connection
+     * @param {Object} neo4jDriver - Neo4j driver instance
      */
-    constructor(config) {
-        // Validate required configuration
-        if (!config) {
-            throw new Error('Configuration object is required');
-        }
-
-        if (!config.databasePath) {
-            throw new Error('databasePath is required in configuration');
-        }
-
-        if (!config.neo4jUri) {
-            throw new Error('neo4jUri is required in configuration');
-        }
-        if (!config.neo4jUser) {
-            throw new Error('neo4jUser is required in configuration');
-        }
-        if (!config.neo4jPassword) {
-            throw new Error('neo4jPassword is required in configuration');
-        }
-
+    constructor(db, neo4jDriver) {
+        this.db = db;
+        this.neo4jDriver = neo4jDriver;
+        
         this.config = {
-            databasePath: config.databasePath,
-            neo4jUri: config.neo4jUri,
-            neo4jUser: config.neo4jUser,
-            neo4jPassword: config.neo4jPassword,
-            batchSize: config.batchSize || 100,
-            allowedRelationshipTypes: config.allowedRelationshipTypes || [
+            batchSize: 100,
+            allowedRelationshipTypes: [
                 'CALLS', 'IMPLEMENTS', 'INHERITS_FROM', 'DEPENDS_ON',
                 'USES_DATA_FROM', 'CONTAINS', 'IMPORTS', 'EXPORTS',
                 'EXTENDS', 'USES'
             ]
         };
-
-        // Initialize connection objects as null
-        this.neo4jDriver = null;
-        this.dbManager = new DatabaseManager(this.config.databasePath);
-        this.db = null;
-    }
-
-    /**
-     * Initialize connections to both SQLite and Neo4j databases
-     * @throws {Error} If Neo4j connection fails
-     */
-    async init() {
-        try {
-            // Initialize SQLite connection
-            this.db = this.dbManager.getDb();
-            
-            // Initialize Neo4j connection
-            this.neo4jDriver = neo4j.driver(
-                this.config.neo4jUri,
-                neo4j.auth.basic(this.config.neo4jUser, this.config.neo4jPassword)
-            );
-
-            // Verify Neo4j connectivity
-            await this.neo4jDriver.verifyConnectivity();
-            
-        } catch (error) {
-            // Clean up any partially initialized connections
-            await this.close();
-            throw new Error(`Failed to initialize GraphBuilder connections: ${error.message}`);
-        }
-    }
-
-    /**
-     * Close all database connections and clean up resources
-     */
-    async close() {
-        const errors = [];
-
-        // Close Neo4j driver if it exists
-        if (this.neo4jDriver) {
-            try {
-                await this.neo4jDriver.close();
-            } catch (error) {
-                errors.push(`Neo4j close error: ${error.message}`);
-            } finally {
-                this.neo4jDriver = null;
-            }
-        }
-
-        // Close SQLite connection via the manager
-        if (this.dbManager) {
-            this.dbManager.close();
-        }
-        this.db = null;
-
-        // If there were errors during cleanup, log them but don't throw
-        if (errors.length > 0) {
-            console.warn('Errors during GraphBuilder cleanup:', errors);
-        }
     }
 
     /**
@@ -119,7 +35,7 @@ class GraphBuilder {
      */
     async run() {
         if (!this.neo4jDriver || !this.db) {
-            throw new Error('GraphBuilder must be initialized before running. Call init() first.');
+            throw new Error('GraphBuilder requires valid database connections.');
         }
 
         try {
@@ -144,27 +60,34 @@ class GraphBuilder {
      */
     async _persistNodes() {
         const session = this.neo4jDriver.session({ database: process.env.NEO4J_DATABASE || 'neo4j' });
-        const query = `SELECT report FROM file_analysis_reports`;
+        const query = `SELECT p.*, f.path as file_path FROM pois p JOIN files f ON p.file_id = f.id`;
         const stmt = this.db.prepare(query);
 
         try {
             let batch = [];
             for (const row of stmt.iterate()) {
                 try {
-                    if (row.report) {
-                        const poi = JSON.parse(row.report);
-                        if (poi && poi.id) {
-                            batch.push(poi);
-                        }
+                    // Create a POI node object from the database row
+                    const poi = {
+                        id: row.id,
+                        name: row.name,
+                        type: row.type,
+                        description: row.description,
+                        line_number: row.line_number,
+                        is_exported: row.is_exported,
+                        file_path: row.file_path,
+                        file_id: row.file_id
+                    };
+                    
+                    batch.push(poi);
+
+                    if (batch.length >= this.config.batchSize) {
+                        await this._runNodeBatch(session, batch);
+                        batch = [];
                     }
                 } catch (e) {
-                    console.warn(`Skipping malformed POI report JSON: ${e.message}`);
+                    console.warn(`Skipping malformed POI row: ${e.message}`);
                     continue;
-                }
-
-                if (batch.length >= this.config.batchSize) {
-                    await this._runNodeBatch(session, batch);
-                    batch = [];
                 }
             }
 
@@ -198,30 +121,34 @@ class GraphBuilder {
      */
     async _persistRelationships() {
         const session = this.neo4jDriver.session({ database: process.env.NEO4J_DATABASE || 'neo4j' });
-        const query = `SELECT summary FROM project_analysis_summaries`;
+        const query = `SELECT * FROM relationships`;
         const stmt = this.db.prepare(query);
 
         try {
             let batch = [];
             for (const row of stmt.iterate()) {
                 try {
-                    if (row.summary) {
-                        const summary = JSON.parse(row.summary);
-                        if (summary && Array.isArray(summary.relationships)) {
-                            const validRels = summary.relationships.filter(rel =>
-                                this.config.allowedRelationshipTypes.includes(rel.type)
-                            );
-                            batch.push(...validRels);
-                        }
+                    // Create a relationship object from the database row
+                    const relationship = {
+                        sourcePoi: row.source_poi_id,
+                        targetPoi: row.target_poi_id,
+                        type: row.type,
+                        explanation: row.reason,
+                        confidence: 0.8 // Default confidence since it's not stored in the current schema
+                    };
+                    
+                    // Filter by allowed relationship types
+                    if (this.config.allowedRelationshipTypes.includes(relationship.type)) {
+                        batch.push(relationship);
+                    }
+
+                    if (batch.length >= this.config.batchSize) {
+                        await this._runRelationshipBatch(session, batch);
+                        batch = [];
                     }
                 } catch (e) {
-                    console.warn(`Skipping malformed relationship summary JSON: ${e.message}`);
+                    console.warn(`Skipping malformed relationship row: ${e.message}`);
                     continue;
-                }
-
-                if (batch.length >= this.config.batchSize) {
-                    await this._runRelationshipBatch(session, batch);
-                    batch = [];
                 }
             }
 
@@ -240,33 +167,67 @@ class GraphBuilder {
      * @param {Array<Object>} batch - An array of relationship objects.
      */
     async _runRelationshipBatch(session, batch) {
+        // Use standard Cypher instead of APOC to avoid dependency issues
         const cypher = `
             UNWIND $batch as rel
             MATCH (source:POI {id: rel.sourcePoi})
             MATCH (target:POI {id: rel.targetPoi})
-            CALL apoc.merge.relationship(
-                source,
-                rel.type,
-                {},
-                { confidence: rel.confidence, explanation: rel.explanation },
-                target
-            )
-            YIELD rel as result
-            RETURN count(result)
+            CALL {
+                WITH source, target, rel
+                WITH source, target, rel.type as relType, rel.confidence as confidence, rel.explanation as explanation
+                CALL apoc.create.relationship(source, relType, {confidence: confidence, explanation: explanation}, target)
+                YIELD rel as createdRel
+                RETURN createdRel
+            }
+            RETURN count(*) as relationshipsCreated
         `;
+        
+        // Fallback to basic Cypher if APOC is not available
+        const basicCypher = `
+            UNWIND $batch as rel
+            MATCH (source:POI {id: rel.sourcePoi})
+            MATCH (target:POI {id: rel.targetPoi})
+            WITH source, target, rel
+            FOREACH (dummy IN CASE WHEN rel.type = 'CALLS' THEN [1] ELSE [] END |
+                CREATE (source)-[:CALLS {confidence: rel.confidence, explanation: rel.explanation}]->(target)
+            )
+            FOREACH (dummy IN CASE WHEN rel.type = 'IMPORTS' THEN [1] ELSE [] END |
+                CREATE (source)-[:IMPORTS {confidence: rel.confidence, explanation: rel.explanation}]->(target)
+            )
+            FOREACH (dummy IN CASE WHEN rel.type = 'EXTENDS' THEN [1] ELSE [] END |
+                CREATE (source)-[:EXTENDS {confidence: rel.confidence, explanation: rel.explanation}]->(target)
+            )
+            FOREACH (dummy IN CASE WHEN rel.type = 'IMPLEMENTS' THEN [1] ELSE [] END |
+                CREATE (source)-[:IMPLEMENTS {confidence: rel.confidence, explanation: rel.explanation}]->(target)
+            )
+            FOREACH (dummy IN CASE WHEN rel.type = 'USES' THEN [1] ELSE [] END |
+                CREATE (source)-[:USES {confidence: rel.confidence, explanation: rel.explanation}]->(target)
+            )
+            FOREACH (dummy IN CASE WHEN rel.type = 'DEPENDS_ON' THEN [1] ELSE [] END |
+                CREATE (source)-[:DEPENDS_ON {confidence: rel.confidence, explanation: rel.explanation}]->(target)
+            )
+            FOREACH (dummy IN CASE WHEN rel.type = 'CONTAINS' THEN [1] ELSE [] END |
+                CREATE (source)-[:CONTAINS {confidence: rel.confidence, explanation: rel.explanation}]->(target)
+            )
+            FOREACH (dummy IN CASE WHEN rel.type = 'INHERITS_FROM' THEN [1] ELSE [] END |
+                CREATE (source)-[:INHERITS_FROM {confidence: rel.confidence, explanation: rel.explanation}]->(target)
+            )
+            FOREACH (dummy IN CASE WHEN rel.type = 'EXPORTS' THEN [1] ELSE [] END |
+                CREATE (source)-[:EXPORTS {confidence: rel.confidence, explanation: rel.explanation}]->(target)
+            )
+            RETURN count(*) as relationshipsCreated
+        `;
+        
         try {
+            // Try APOC first, fall back to basic Cypher
             await session.run(cypher, { batch });
         } catch (error) {
-            if (error.message.includes('apoc.merge.relationship')) {
-                console.error(
-                    'APOC procedure not found. Please ensure the APOC plugin is installed in Neo4j.'
-                );
-                throw new Error(
-                    'Missing APOC plugin in Neo4j, which is required for relationship persistence. ' +
-                    'Please see installation instructions for APOC.'
-                );
+            if (error.message.includes('apoc.create.relationship') || error.message.includes('Unknown procedure')) {
+                console.warn('APOC not available, using basic Cypher for relationship creation');
+                await session.run(basicCypher, { batch });
+            } else {
+                throw error;
             }
-            throw error;
         }
     }
 }

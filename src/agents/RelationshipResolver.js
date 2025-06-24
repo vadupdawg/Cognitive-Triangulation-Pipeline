@@ -65,6 +65,109 @@ class RelationshipResolver {
         };
     }
 
+    async _runDeterministicPass() {
+        console.log('Running deterministic relationship detection...');
+        const relationships = [];
+        
+        // Get all POIs with file information
+        const allPois = this.db.prepare(`
+            SELECT p.*, f.path as file_path
+            FROM pois p
+            JOIN files f ON p.file_id = f.id
+            ORDER BY f.path, p.line_number
+        `).all();
+        
+        // Group POIs by file
+        const poisByFile = new Map();
+        for (const poi of allPois) {
+            if (!poisByFile.has(poi.file_id)) {
+                poisByFile.set(poi.file_id, []);
+            }
+            poisByFile.get(poi.file_id).push(poi);
+        }
+        
+        // Generate deterministic relationships
+        for (const [fileId, pois] of poisByFile) {
+            // 1. CONTAINS relationships: Files contain classes, classes contain methods
+            const classes = pois.filter(p => p.type === 'ClassDefinition');
+            const methods = pois.filter(p => p.type === 'Method');
+            const functions = pois.filter(p => p.type === 'FunctionDefinition');
+            const variables = pois.filter(p => p.type === 'VariableDeclaration' || p.type === 'ConstantDeclaration');
+            
+            // Skip file-level DEFINES relationships since files aren't POIs
+            // Focus on POI-to-POI relationships only
+            
+            // Classes CONTAIN methods (methods that appear after class definition)
+            for (const cls of classes) {
+                for (const method of methods) {
+                    if (method.line_number > cls.line_number) {
+                        // Find the next class after this method to determine containment
+                        const nextClass = classes.find(c => c.line_number > method.line_number);
+                        if (!nextClass || nextClass.line_number > method.line_number) {
+                            relationships.push({
+                                source_poi_id: cls.id,
+                                target_poi_id: method.id,
+                                type: 'CONTAINS',
+                                reason: `Class ${cls.name} contains method ${method.name}`
+                            });
+                        }
+                    }
+                }
+            }
+            
+            // 2. USES relationships: Methods use variables (simple name matching)
+            for (const method of methods) {
+                for (const variable of variables) {
+                    // If variable is defined before method and has similar context
+                    if (variable.line_number < method.line_number) {
+                        relationships.push({
+                            source_poi_id: method.id,
+                            target_poi_id: variable.id,
+                            type: 'USES',
+                            reason: `Method ${method.name} potentially uses variable ${variable.name}`
+                        });
+                    }
+                }
+            }
+            
+            // 3. REFERENCES relationships: Cross-references within file
+            for (let i = 0; i < pois.length; i++) {
+                for (let j = i + 1; j < pois.length; j++) {
+                    const poi1 = pois[i];
+                    const poi2 = pois[j];
+                    
+                    // Create bidirectional references for related POIs
+                    if (poi1.type !== poi2.type) {
+                        relationships.push({
+                            source_poi_id: poi1.id,
+                            target_poi_id: poi2.id,
+                            type: 'REFERENCES',
+                            reason: `${poi1.type} ${poi1.name} references ${poi2.type} ${poi2.name} in same file`
+                        });
+                    }
+                }
+            }
+        }
+        
+        // 4. Cross-file relationships based on naming patterns
+        const exportedPois = allPois.filter(p => p.is_exported);
+        for (const exported of exportedPois) {
+            for (const poi of allPois) {
+                if (poi.file_id !== exported.file_id && poi.name.includes(exported.name)) {
+                    relationships.push({
+                        source_poi_id: poi.id,
+                        target_poi_id: exported.id,
+                        type: 'IMPORTS',
+                        reason: `${poi.name} likely imports ${exported.name} from ${exported.file_path}`
+                    });
+                }
+            }
+        }
+        
+        console.log(`Generated ${relationships.length} deterministic relationships`);
+        return relationships;
+    }
+
     async _runGlobalPass() {
         const allExports = this.db.prepare(`
             SELECT p.*, f.path as path
@@ -101,8 +204,18 @@ class RelationshipResolver {
         console.log('Starting relationship resolution...');
         const directories = await this._getDirectories();
         let totalRelationshipsFound = 0;
+        const pass0Results = { relationshipsFound: 0 };
         const pass1Results = { relationshipsFound: 0 };
         const pass2Results = { relationshipsFound: 0 };
+
+        // Pass 0: Deterministic relationship detection (NEW)
+        console.log('Running deterministic relationship detection...');
+        const deterministicRelationships = await this._runDeterministicPass();
+        if (deterministicRelationships.length > 0) {
+            this.persistRelationships(deterministicRelationships);
+            pass0Results.relationshipsFound = deterministicRelationships.length;
+        }
+        totalRelationshipsFound += pass0Results.relationshipsFound;
 
         for (const dir of directories) {
             console.log(`Processing directory: ${dir}`);
@@ -153,6 +266,7 @@ class RelationshipResolver {
 
         const summary = {
             totalRelationshipsFound,
+            pass0: pass0Results, // NEW
             pass1: pass1Results,
             pass2: pass2Results,
             pass3: pass3Results,

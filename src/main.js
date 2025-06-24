@@ -35,13 +35,13 @@ async function main() {
     await entityScout.run();
     console.log('EntityScout Agent finished.');
 
-    console.log('Starting GraphBuilder Agent...');
-    await graphBuilder.run();
-    console.log('GraphBuilder Agent finished.');
-
     console.log('Starting RelationshipResolver Agent...');
     await relationshipResolver.run();
     console.log('RelationshipResolver Agent finished.');
+
+    console.log('Starting GraphBuilder Agent...');
+    await graphBuilder.run();
+    console.log('GraphBuilder Agent finished.');
 
     console.log('Cognitive triangulation pipeline completed successfully.');
   } catch (error) {
@@ -58,12 +58,21 @@ async function main() {
 async function clearDatabases(db, neo4jDriver) {
   // Clear SQLite database tables and reset auto-increment counters
   console.log('Clearing SQLite database tables...');
-  await db.run('DELETE FROM entity_reports');
-  await db.run('DELETE FROM files');
+  db.exec('DELETE FROM relationships');
+  db.exec('DELETE FROM pois');
+  db.exec('DELETE FROM files');
   
-  // Reset auto-increment counters to ensure fresh start
-  await db.run('DELETE FROM sqlite_sequence WHERE name IN ("files", "entity_reports")');
-  console.log('SQLite tables cleared and auto-increment counters reset.');
+  // Reset auto-increment counters to ensure fresh start (only if sqlite_sequence table exists)
+  try {
+    db.exec('DELETE FROM sqlite_sequence WHERE name IN ("files", "pois", "relationships")');
+    console.log('SQLite tables cleared and auto-increment counters reset.');
+  } catch (error) {
+    // Ignore if sqlite_sequence doesn't exist yet
+    if (!error.message.includes('no such table: sqlite_sequence')) {
+      throw error;
+    }
+    console.log('SQLite tables cleared (no auto-increment counters to reset).');
+  }
 
   // Clear Neo4j database
   console.log('Clearing Neo4j database...');

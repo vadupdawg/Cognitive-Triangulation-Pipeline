@@ -1,4 +1,4 @@
-const DatabaseManager = require('./src/utils/sqliteDb');
+const { DatabaseManager } = require('./src/utils/sqliteDb');
 const { SQLITE_DB_PATH } = require('./config');
 
 module.exports = async () => {
