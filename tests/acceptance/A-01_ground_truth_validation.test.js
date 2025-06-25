@@ -33,28 +33,17 @@ function runPipeline() {
   });
 }
 
+const { getNeo4jDriver } = require('../../src/utils/neo4jDriver');
+
 describe('Acceptance Test A-01: High-Throughput Graph Ingestion', () => {
-  let driver;
-
-  beforeAll(async () => {
-    // Initialize database first
-    await initializeDb();
-    
-    // Connect to Neo4j (but don't clear it - use existing data if available)
-    driver = neo4j.driver(NEO4J_URI, neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD));
-
-  }, 30000); // 30s timeout for setup
-
-  afterAll(async () => {
-    if (driver) {
-      await driver.close();
-    }
-  });
-
   test('should ingest over 300 nodes and 1600 relationships', async () => {
+    const driver = getNeo4jDriver();
     const session = driver.session({ database: NEO4J_DATABASE });
 
     try {
+      // Initialize database first
+      await initializeDb();
+
       // Check if data already exists
       const nodeResult = await session.run('MATCH (n) RETURN count(n) AS count');
       const existingNodeCount = nodeResult.records[0].get('count').low;
@@ -63,7 +52,7 @@ describe('Acceptance Test A-01: High-Throughput Graph Ingestion', () => {
       const existingRelCount = relResult.records[0].get('count').low;
 
       // Only run pipeline if insufficient data exists
-      if (existingNodeCount <= THROUGHPUT_GOALS.nodes || existingRelCount <= THROUGHPUT_GOALS.relationships) {
+      if (existingNodeCount <= GROUND_TRUTH_TARGETS.nodes || existingRelCount <= GROUND_TRUTH_TARGETS.relationships) {
         console.log(`Insufficient data found (nodes: ${existingNodeCount}, relationships: ${existingRelCount}). Running pipeline...`);
         
         // 1. Execute the full pipeline on the polyglot-test directory
@@ -77,24 +66,25 @@ describe('Acceptance Test A-01: High-Throughput Graph Ingestion', () => {
         const newRelResult = await session.run('MATCH ()-[r]->() RETURN count(r) AS count');
         const actualRelCount = newRelResult.records[0].get('count').low;
 
-        console.log(`Pipeline completed. Verifying Node Count -- Expected > ${THROUGHPUT_GOALS.nodes}, Actual: ${actualNodeCount}`);
-        console.log(`Pipeline completed. Verifying Relationship Count -- Expected > ${THROUGHPUT_GOALS.relationships}, Actual: ${actualRelCount}`);
+        console.log(`Pipeline completed. Verifying Node Count -- Expected > ${GROUND_TRUTH_TARGETS.nodes}, Actual: ${actualNodeCount}`);
+        console.log(`Pipeline completed. Verifying Relationship Count -- Expected > ${GROUND_TRUTH_TARGETS.relationships}, Actual: ${actualRelCount}`);
         
-        expect(actualNodeCount).toBeGreaterThan(THROUGHPUT_GOALS.nodes);
-        expect(actualRelCount).toBeGreaterThan(THROUGHPUT_GOALS.relationships);
+        expect(actualNodeCount).toBeGreaterThan(GROUND_TRUTH_TARGETS.nodes);
+        expect(actualRelCount).toBeGreaterThan(GROUND_TRUTH_TARGETS.relationships);
       } else {
         console.log(`Sufficient data already exists (nodes: ${existingNodeCount}, relationships: ${existingRelCount}). Skipping pipeline execution.`);
         
         // 2. AI-Verifiable: Verify Node and Relationship Counts
-        console.log(`Verifying Node Count -- Expected > ${THROUGHPUT_GOALS.nodes}, Actual: ${existingNodeCount}`);
-        expect(existingNodeCount).toBeGreaterThan(THROUGHPUT_GOALS.nodes);
+        console.log(`Verifying Node Count -- Expected > ${GROUND_TRUTH_TARGETS.nodes}, Actual: ${existingNodeCount}`);
+        expect(existingNodeCount).toBeGreaterThan(GROUND_TRUTH_TARGETS.nodes);
 
-        console.log(`Verifying Relationship Count -- Expected > ${THROUGHPUT_GOALS.relationships}, Actual: ${existingRelCount}`);
-        expect(existingRelCount).toBeGreaterThan(THROUGHPUT_GOALS.relationships);
+        console.log(`Verifying Relationship Count -- Expected > ${GROUND_TRUTH_TARGETS.relationships}, Actual: ${existingRelCount}`);
+        expect(existingRelCount).toBeGreaterThan(GROUND_TRUTH_TARGETS.relationships);
       }
 
     } finally {
       await session.close();
+      // The driver is managed by the neo4jDriver utility, so we don't close it here
     }
   }, 600000); // 10 minutes timeout for long-running pipeline
 });

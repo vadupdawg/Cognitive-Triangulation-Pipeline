@@ -24,78 +24,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { DatabaseManager } = require('../../src/utils/sqliteDb');
 const { getTestDriver } = require('../test-utils');
-
-// Mock SelfCleaningAgent implementation for testing
-// This is a minimal implementation based on the architecture and pseudocode
-class SelfCleaningAgent {
-    constructor(sqliteDb, neo4jDriver, projectRoot) {
-        if (!sqliteDb) {
-            throw new Error('Invalid database client provided.');
-        }
-        if (!neo4jDriver) {
-            throw new Error('Invalid graph client provided.');
-        }
-        this.sqliteDb = sqliteDb;
-        this.neo4jDriver = neo4jDriver;
-        this.projectRoot = projectRoot;
-    }
-
-    async reconcile() {
-        // Mark phase: Find files that exist in DB but not on filesystem
-        const dbFiles = this.sqliteDb.prepare('SELECT path FROM files WHERE status != ?').all('PENDING_DELETION');
-        
-        for (const file of dbFiles) {
-            const fullPath = path.join(this.projectRoot, file.path);
-            if (!fs.existsSync(fullPath)) {
-                // Mark for deletion
-                this.sqliteDb.prepare('UPDATE files SET status = ? WHERE path = ?')
-                    .run('PENDING_DELETION', file.path);
-            }
-        }
-    }
-
-    async run() {
-        // Sweep phase: Delete files marked for deletion
-        const filesToDelete = this.sqliteDb.prepare('SELECT path FROM files WHERE status = ?').all('PENDING_DELETION');
-        
-        if (filesToDelete.length === 0) {
-            console.log('No files to clean up.');
-            return;
-        }
-
-        const filePaths = filesToDelete.map(f => f.path);
-        
-        try {
-            // Clean Neo4j first
-            await this._cleanNeo4jBatch(filePaths);
-            
-            // Only if Neo4j succeeds, clean SQLite
-            await this._cleanSqliteBatch(filePaths);
-            
-            console.log(`Successfully cleaned up ${filesToDelete.length} files.`);
-        } catch (error) {
-            console.error(`Failed to clean up batch. No records were deleted. Reason: ${error.message}`);
-            throw error;
-        }
-    }
-
-    async _cleanNeo4jBatch(filePaths) {
-        const session = this.neo4jDriver.session();
-        try {
-            await session.run(
-                'UNWIND $paths AS filePath MATCH (f:File {path: filePath}) DETACH DELETE f',
-                { paths: filePaths }
-            );
-        } finally {
-            await session.close();
-        }
-    }
-
-    async _cleanSqliteBatch(filePaths) {
-        const placeholders = filePaths.map(() => '?').join(',');
-        this.sqliteDb.prepare(`DELETE FROM files WHERE path IN (${placeholders})`).run(...filePaths);
-    }
-}
+const SelfCleaningAgent = require('../../src/agents/SelfCleaningAgent');
 
 describe('SelfCleaningAgent Integration Tests', () => {
     let testDbManager;
@@ -186,8 +115,13 @@ describe('SelfCleaningAgent Integration Tests', () => {
             testDb.prepare('INSERT INTO files (id, path, status) VALUES (?, ?, ?)').run(fileBId, 'file_B.js', 'processed');
 
             // Setup: Seed Neo4j with corresponding File nodes
-            await neo4jSession.run('CREATE (f:File {path: $path})', { path: 'file_A.js' });
-            await neo4jSession.run('CREATE (f:File {path: $path})', { path: 'file_B.js' });
+            const setupSession = neo4jTestDriver.session();
+            try {
+                await setupSession.run('CREATE (f:File {path: $path})', { path: 'file_A.js' });
+                await setupSession.run('CREATE (f:File {path: $path})', { path: 'file_B.js' });
+            } finally {
+                await setupSession.close();
+            }
 
             // Setup: Create files on filesystem
             await fs.writeFile(path.join(testProjectRoot, 'file_A.js'), 'console.log("A");');
@@ -208,8 +142,13 @@ describe('SelfCleaningAgent Integration Tests', () => {
             expect(fileARecord.status).toBe('processed');
 
             // Verification: Check Neo4j nodes still exist
-            const neo4jResult = await neo4jSession.run('MATCH (f:File) WHERE f.path IN [$path1, $path2] RETURN count(f) as nodeCount', { path1: 'file_A.js', path2: 'file_B.js' });
-            expect(neo4jResult.records[0].get('nodeCount').toNumber()).toBe(2);
+            const verifySession = neo4jTestDriver.session();
+            try {
+                const neo4jResult = await verifySession.run('MATCH (f:File) WHERE f.path IN [$path1, $path2] RETURN count(f) as nodeCount', { path1: 'file_A.js', path2: 'file_B.js' });
+                expect(neo4jResult.records[0].get('nodeCount').toNumber()).toBe(2);
+            } finally {
+                await verifySession.close();
+            }
         });
 
         /**
@@ -255,8 +194,13 @@ describe('SelfCleaningAgent Integration Tests', () => {
             testDb.prepare('INSERT INTO files (id, path, status) VALUES (?, ?, ?)').run(fileBId, 'file_B.js', 'PENDING_DELETION');
 
             // Setup: Seed Neo4j with corresponding File nodes
-            await neo4jSession.run('CREATE (f:File {path: $path})', { path: 'file_A.js' });
-            await neo4jSession.run('CREATE (f:File {path: $path})', { path: 'file_B.js' });
+            const setupSession = neo4jTestDriver.session();
+            try {
+                await setupSession.run('CREATE (f:File {path: $path})', { path: 'file_A.js' });
+                await setupSession.run('CREATE (f:File {path: $path})', { path: 'file_B.js' });
+            } finally {
+                await setupSession.close();
+            }
 
             // Action: Execute run
             await agent.run();
@@ -266,16 +210,21 @@ describe('SelfCleaningAgent Integration Tests', () => {
             expect(fileBRecord).toBeUndefined();
 
             // Verification: Check file_B.js is deleted from Neo4j
-            const neo4jBResult = await neo4jSession.run('MATCH (f:File {path: $path}) RETURN f', { path: 'file_B.js' });
-            expect(neo4jBResult.records.length).toBe(0);
+            const verifySession = neo4jTestDriver.session();
+            try {
+                const neo4jBResult = await verifySession.run('MATCH (f:File {path: $path}) RETURN f', { path: 'file_B.js' });
+                expect(neo4jBResult.records.length).toBe(0);
 
-            // Verification: Check file_A.js still exists in both databases
-            const fileARecord = testDb.prepare('SELECT * FROM files WHERE path = ?').get('file_A.js');
-            expect(fileARecord).toBeDefined();
-            expect(fileARecord.status).toBe('processed');
+                // Verification: Check file_A.js still exists in both databases
+                const fileARecord = testDb.prepare('SELECT * FROM files WHERE path = ?').get('file_A.js');
+                expect(fileARecord).toBeDefined();
+                expect(fileARecord.status).toBe('processed');
 
-            const neo4jAResult = await neo4jSession.run('MATCH (f:File {path: $path}) RETURN f', { path: 'file_A.js' });
-            expect(neo4jAResult.records.length).toBe(1);
+                const neo4jAResult = await verifySession.run('MATCH (f:File {path: $path}) RETURN f', { path: 'file_A.js' });
+                expect(neo4jAResult.records.length).toBe(1);
+            } finally {
+                await verifySession.close();
+            }
         });
 
         /**
@@ -288,7 +237,7 @@ describe('SelfCleaningAgent Integration Tests', () => {
             const fileBId = uuidv4();
             testDb.prepare('INSERT INTO files (id, path, status) VALUES (?, ?, ?)').run(fileBId, 'file_B.js', 'PENDING_DELETION');
 
-            const setupSession = neo4jDriver.session();
+            const setupSession = neo4jTestDriver.session();
             try {
                 await setupSession.run('CREATE (f:File {path: $path})', { path: 'file_B.js' });
             } finally {
@@ -313,7 +262,7 @@ describe('SelfCleaningAgent Integration Tests', () => {
             expect(fileBRecord.status).toBe('PENDING_DELETION');
 
             // Verification: Check file_B.js still exists in Neo4j
-            const verifySession = neo4jDriver.session();
+            const verifySession = neo4jTestDriver.session();
             try {
                 const neo4jResult = await verifySession.run('MATCH (f:File {path: $path}) RETURN f', { path: 'file_B.js' });
                 expect(neo4jResult.records.length).toBe(1);
@@ -330,7 +279,7 @@ describe('SelfCleaningAgent Integration Tests', () => {
             // Setup: Seed databases as in SCA-TC-03
             const fileBId = uuidv4();
             testDb.prepare('INSERT INTO files (id, path, status) VALUES (?, ?, ?)').run(fileBId, 'file_B.js', 'PENDING_DELETION');
-            const setupSession = neo4jDriver.session();
+            const setupSession = neo4jTestDriver.session();
             try {
                 await setupSession.run('CREATE (f:File {path: $path})', { path: 'file_B.js' });
             } finally {
@@ -360,7 +309,13 @@ describe('SelfCleaningAgent Integration Tests', () => {
             // Setup: Seed SQLite and Neo4j with file record
             const fileId = uuidv4();
             testDb.prepare('INSERT INTO files (id, path, status) VALUES (?, ?, ?)').run(fileId, 'file_to_delete.js', 'processed');
-            await neo4jSession.run('CREATE (f:File {path: $path})', { path: 'file_to_delete.js' });
+            
+            const setupSession = neo4jTestDriver.session();
+            try {
+                await setupSession.run('CREATE (f:File {path: $path})', { path: 'file_to_delete.js' });
+            } finally {
+                await setupSession.close();
+            }
 
             // Setup: Create file on filesystem
             await fs.writeFile(path.join(testProjectRoot, 'file_to_delete.js'), 'console.log("delete me");');
@@ -383,8 +338,13 @@ describe('SelfCleaningAgent Integration Tests', () => {
             expect(deletedRecord).toBeUndefined();
 
             // Verification: Check sweep phase results - Neo4j
-            const neo4jResult = await neo4jSession.run('MATCH (f:File {path: $path}) RETURN f', { path: 'file_to_delete.js' });
-            expect(neo4jResult.records.length).toBe(0);
+            const verifySession = neo4jTestDriver.session();
+            try {
+                const neo4jResult = await verifySession.run('MATCH (f:File {path: $path}) RETURN f', { path: 'file_to_delete.js' });
+                expect(neo4jResult.records.length).toBe(0);
+            } finally {
+                await verifySession.close();
+            }
         });
     });
 });

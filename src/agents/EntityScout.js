@@ -219,8 +219,15 @@ Return ONLY the corrected JSON object.`;
     async run() {
         console.log(`Starting EntityScout for directory: ${this.targetDirectory}`);
         
-        const files = await this._discoverFiles(this.targetDirectory);
-        console.log(`Found ${files.length} files to process`);
+        // Use provided file filter or discover files
+        let files;
+        if (this.config.fileFilter) {
+            files = this.config.fileFilter;
+            console.log(`Processing ${files.length} filtered files`);
+        } else {
+            files = await this._discoverFiles(this.targetDirectory);
+            console.log(`Found ${files.length} files to process`);
+        }
         
         const concurrencyLimit = 50;
         const promises = [];
@@ -326,14 +333,35 @@ Return ONLY the corrected JSON object.`;
 
             const fileId = await this._storeFile(filePath, fileChecksum, path.extname(filePath).substring(1));
             
+            // Perform LLM analysis to extract POIs
+            const analysisResult = await this._analyzeFileContent(fileContent);
+            
+            if (analysisResult.error) {
+                return {
+                    filePath,
+                    fileChecksum,
+                    language: path.extname(filePath).substring(1),
+                    pois: [],
+                    status: 'FAILED_LLM_ANALYSIS',
+                    error: analysisResult.error.message,
+                    analysisAttempts: analysisResult.attempts,
+                };
+            }
+            
+            // Store extracted POIs
+            await this._storePois(fileId, analysisResult.pois);
+            
+            // Update file status to indicate successful processing
+            this.db.prepare('UPDATE files SET status = ? WHERE id = ?').run('processed', fileId);
+            
             return {
                 filePath,
                 fileChecksum,
                 language: path.extname(filePath).substring(1),
-                pois: [],
+                pois: analysisResult.pois,
                 status: 'COMPLETED_SUCCESS',
                 error: null,
-                analysisAttempts: 0,
+                analysisAttempts: analysisResult.attempts,
             };
 
         } catch (error) {

@@ -16,17 +16,29 @@ const { NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE } = require('../co
 let driver;
 
 /**
+ * Resolves localhost to IPv4 to avoid DNS resolution issues on Windows
+ * @param {string} uri - The original Neo4j URI
+ * @returns {string} - The URI with localhost resolved to 127.0.0.1
+ */
+function resolveLocalhostToIPv4(uri) {
+  return uri.replace('localhost', '127.0.0.1');
+}
+
+/**
  * Returns a singleton instance of the Neo4j driver.
  * This function is designed to be mocked in tests.
  * @returns {neo4j.Driver} The Neo4j driver instance.
  */
 function getDriver() {
   if (!driver || driver._closed) {
+    // Resolve localhost to IPv4 to avoid DNS resolution issues
+    const resolvedURI = resolveLocalhostToIPv4(NEO4J_URI);
+    
     // In a real app, connection details would come from environment variables
     // and you'd have more robust error handling and connection management.
-    console.log(`[Neo4jDriver] Connecting to Neo4j at ${NEO4J_URI} with user ${NEO4J_USER} and database ${NEO4J_DATABASE}`);
+    console.log(`[Neo4jDriver] Connecting to Neo4j at ${NEO4J_URI} (resolved to ${resolvedURI}) with user ${NEO4J_USER} and database ${NEO4J_DATABASE}`);
     driver = neo4j.driver(
-      NEO4J_URI,
+      resolvedURI,
       neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD)
     );
   }

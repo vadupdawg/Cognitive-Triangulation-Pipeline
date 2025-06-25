@@ -1,8 +1,10 @@
 CREATE TABLE IF NOT EXISTS files (
     id TEXT PRIMARY KEY,
-    path TEXT NOT NULL UNIQUE,
+    file_path TEXT NOT NULL UNIQUE,
     checksum TEXT,
-    language TEXT
+    language TEXT,
+    special_file_type TEXT,
+    status TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS pois (

@@ -67,7 +67,7 @@ class GraphBuilder {
      * Parallel node persistence with optimized batching
      */
     async _persistNodesParallel() {
-        const query = `SELECT p.*, f.path as file_path FROM pois p JOIN files f ON p.file_id = f.id`;
+        const query = `SELECT p.*, f.file_path FROM pois p JOIN files f ON p.file_id = f.id`;
         const stmt = this.db.prepare(query);
         
         const batches = [];

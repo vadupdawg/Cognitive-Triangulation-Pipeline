@@ -1,0 +1,36 @@
+{
+  "patterns": [
+    {
+      "pattern": "^package\\.json$",
+      "type": "manifest"
+    },
+    {
+      "pattern": "^pom\\.xml$",
+      "type": "manifest"
+    },
+    {
+      "pattern": "^requirements\\.txt$",
+      "type": "manifest"
+    },
+    {
+      "pattern": "^(server|main|index|app)\\.js$",
+      "type": "entrypoint"
+    },
+    {
+      "pattern": "\\.config\\.js$",
+      "type": "config"
+    },
+    {
+      "pattern": "\\.ya?ml$",
+      "type": "config"
+    },
+    {
+      "pattern": "^Dockerfile$",
+      "type": "deployment"
+    },
+    {
+      "pattern": "^docker-compose\\.ya?ml$",
+      "type": "deployment"
+    }
+  ]
+}

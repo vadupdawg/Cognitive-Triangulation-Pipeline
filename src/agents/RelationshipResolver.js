@@ -12,12 +12,12 @@ class RelationshipResolver {
 
     async _getDirectories() {
         const rows = this.db.prepare(`
-            SELECT DISTINCT f.path
+            SELECT DISTINCT f.file_path
             FROM files f
             JOIN pois p ON f.id = p.file_id
         `).all();
 
-        const dirs = new Set(rows.map(r => path.dirname(r.path)));
+        const dirs = new Set(rows.map(r => path.dirname(r.file_path)));
         return Array.from(dirs);
     }
 
@@ -26,10 +26,10 @@ class RelationshipResolver {
         // It assumes that paths are stored in a way that allows for efficient directory-based filtering.
         // For example, using LIKE with a wildcard. Ensure your 'files.path' column is indexed.
         const pois = this.db.prepare(`
-            SELECT p.*, f.path as path
+            SELECT p.*, f.file_path as path
             FROM pois p
             JOIN files f ON p.file_id = f.id
-            WHERE f.path LIKE ?
+            WHERE f.file_path LIKE ?
         `).all(`${directory}${path.sep}%`);
         return pois;
     }
@@ -71,10 +71,10 @@ class RelationshipResolver {
         
         // Get all POIs with file information
         const allPois = this.db.prepare(`
-            SELECT p.*, f.path as file_path
+            SELECT p.*, f.file_path
             FROM pois p
             JOIN files f ON p.file_id = f.id
-            ORDER BY f.path, p.line_number
+            ORDER BY f.file_path, p.line_number
         `).all();
         
         // Group POIs by file
@@ -170,7 +170,7 @@ class RelationshipResolver {
 
     async _runGlobalPass() {
         const allExports = this.db.prepare(`
-            SELECT p.*, f.path as path
+            SELECT p.*, f.file_path as path
             FROM pois p
             JOIN files f ON p.file_id = f.id
             WHERE p.is_exported = 1

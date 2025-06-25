@@ -1,22 +1,30 @@
-const OpenAI = require('openai');
+const https = require('https');
 require('dotenv').config();
+const config = require('../config');
 
 /**
- * Production-ready DeepSeek LLM Client
- * Uses OpenAI SDK for compatibility with DeepSeek API
+ * Pure DeepSeek LLM Client
+ * Native implementation using HTTPS requests to DeepSeek API
+ * No OpenAI SDK dependencies
  */
 class DeepSeekClient {
     constructor() {
-        this.client = new OpenAI({
-            baseURL: 'https://api.deepseek.com',
-            apiKey: process.env.DEEPSEEK_API_KEY,
-            timeout: 600000, // 10 minutes timeout for complex analysis
-            dangerouslyAllowBrowser: true, // Allow in test environment
-        });
+        this.baseURL = 'https://api.deepseek.com';
+        this.timeout = 600000; // 10 minutes timeout for complex analysis
         
-        if (!process.env.DEEPSEEK_API_KEY) {
-            throw new Error('DEEPSEEK_API_KEY environment variable is required');
+        // Lazy load API key to ensure config is loaded
+        this._apiKey = null;
+    }
+
+    get apiKey() {
+        if (!this._apiKey) {
+            this._apiKey = config.DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY;
+            if (!this._apiKey) {
+                throw new Error('DEEPSEEK_API_KEY environment variable is required');
+            }
+            console.log('✅ DeepSeek Client initialized successfully');
         }
+        return this._apiKey;
     }
 
     /**
@@ -31,14 +39,16 @@ class DeepSeekClient {
                 { role: 'user', content: prompt.user }
             ];
 
-            const response = await this.client.chat.completions.create({
-                model: 'deepseek-chat', // Points to DeepSeek-V3-0324 (128K context, March 2025)
+            const requestBody = JSON.stringify({
+                model: 'deepseek-chat',
                 messages: messages,
-                temperature: 0.2, // Balanced temperature for natural but consistent output
-                max_tokens: 8000, // Maximum allowed for generation
+                temperature: 0.2,
+                max_tokens: 8000,
                 stream: false
             });
 
+            const response = await this._makeRequest('/chat/completions', 'POST', requestBody);
+            
             return {
                 body: response.choices[0].message.content,
                 usage: response.usage
@@ -60,13 +70,28 @@ class DeepSeekClient {
     }
 
     /**
+     * Query method for compatibility with EntityScout
+     * @param {string} promptString - The user prompt
+     * @returns {Promise<string>} - The response content
+     */
+    async query(promptString) {
+        const prompt = {
+            system: 'You are an expert software engineer specializing in code analysis.',
+            user: promptString
+        };
+        
+        const response = await this.call(prompt);
+        return response.body;
+    }
+
+    /**
      * Alternative interface for compatibility with tests and other code
      * @param {Object} options - Chat completion options
-     * @returns {Promise<Object>} - The response in OpenAI format
+     * @returns {Promise<Object>} - The response in OpenAI-compatible format
      */
     async createChatCompletion(options) {
         try {
-            const response = await this.client.chat.completions.create({
+            const requestBody = JSON.stringify({
                 model: options.model || 'deepseek-chat',
                 messages: options.messages,
                 temperature: options.temperature || 0.2,
@@ -75,11 +100,71 @@ class DeepSeekClient {
                 stream: false
             });
 
+            const response = await this._makeRequest('/chat/completions', 'POST', requestBody);
             return response;
         } catch (error) {
             console.error('DeepSeek createChatCompletion failed:', error.message);
             throw error;
         }
+    }
+
+    /**
+     * Make HTTP request to DeepSeek API
+     * @private
+     */
+    async _makeRequest(endpoint, method, body) {
+        return new Promise((resolve, reject) => {
+            const url = new URL(this.baseURL + endpoint);
+            
+            const options = {
+                hostname: url.hostname,
+                port: url.port || 443,
+                path: url.pathname,
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Length': Buffer.byteLength(body)
+                },
+                timeout: this.timeout
+            };
+
+            const req = https.request(options, (res) => {
+                let data = '';
+
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+
+                res.on('end', () => {
+                    try {
+                        const parsedData = JSON.parse(data);
+                        
+                        if (res.statusCode >= 200 && res.statusCode < 300) {
+                            resolve(parsedData);
+                        } else {
+                            const error = new Error(parsedData.error?.message || `HTTP ${res.statusCode}`);
+                            error.status = res.statusCode;
+                            reject(error);
+                        }
+                    } catch (parseError) {
+                        reject(new Error(`Failed to parse response: ${parseError.message}`));
+                    }
+                });
+            });
+
+            req.on('error', (error) => {
+                reject(error);
+            });
+
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Request timeout'));
+            });
+
+            req.write(body);
+            req.end();
+        });
     }
 
     /**
