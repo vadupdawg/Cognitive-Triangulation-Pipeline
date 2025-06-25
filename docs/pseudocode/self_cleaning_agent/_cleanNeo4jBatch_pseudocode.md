@@ -1,58 +1,77 @@
-# SelfCleaningAgent `_cleanNeo4jBatch` Method Pseudocode
+# Pseudocode for `_cleanNeo4jBatch` Method
 
-## FUNCTION _cleanNeo4jBatch(filePaths)
+**Class:** `SelfCleaningAgent`
+**Method:** `_cleanNeo4jBatch(filePaths: Array<string>): Promise<void>`
 
-### Description
-This helper function performs a batch deletion of file nodes from the Neo4j database. It takes a list of file paths and deletes all corresponding `:File` nodes and their relationships in a single, atomic transaction. This ensures that either all specified nodes are deleted or none are, preventing partial updates.
+## 1. Purpose
 
-### TDD Anchors
--   TEST should do nothing if the `filePaths` array is empty or null.
--   TEST should open a transaction with the Neo4j driver.
--   TEST should execute a single `DETACH DELETE` Cypher query.
--   TEST should use the `filePaths` array as a parameter in the query.
--   TEST should commit the transaction upon successful execution.
--   TEST should roll back the transaction if the query fails.
--   TEST should throw an error if the database operation fails.
--   TEST should log the successful deletion of nodes.
--   TEST should log an error and the rollback action on failure.
+This method efficiently deletes a batch of `:File` nodes from the Neo4j database using a single, parameterized query. It is designed for performance and atomicity, ensuring that the cleanup process is robust.
 
-### Logic
+## 2. SPARC Pseudocode
+
 ```pseudocode
-FUNCTION _cleanNeo4jBatch(filePaths)
-  INPUT: filePaths -- An array of strings, where each string is a file path.
-  OUTPUT: None -- Throws an error on failure.
+-- BEGIN _cleanNeo4jBatch
 
-  -- TEST--_cleanNeo4jBatch handles empty file path list gracefully
-  IF filePaths IS NULL OR filePaths IS EMPTY
-    LOG "No file paths provided for Neo4j batch cleanup. Skipping."
+FUNCTION _cleanNeo4jBatch(filePaths)
+  -- TDD ANCHOR: TEST behavior when filePaths is null
+  -- TDD ANCHOR: TEST behavior when filePaths is an empty array
+  IF filePaths IS NULL OR filePaths IS EMPTY THEN
+    LOG_WARN "Attempted to clean Neo4j batch with no file paths provided. Aborting operation."
     RETURN
   END IF
 
-  transaction = NULL
+  -- Obtain a database session
+  session = neo4jDriver.session()
 
   TRY
-    -- TEST--_cleanNeo4jBatch opens a transaction
-    transaction = neo4j.beginTransaction()
+    -- Construct a single Cypher query using UNWIND for batch processing.
+    -- This is more performant than sending multiple delete queries.
+    query = "UNWIND $paths AS filePath MATCH (f:File {path: filePath}) DETACH DELETE f"
+    params = { paths: filePaths }
 
-    -- This single query finds all :File nodes whose file_path is in the list
-    -- and deletes them along with any attached relationships (DETACH DELETE).
-    -- TEST--_cleanNeo4jBatch executes a single batch delete query
-    cypherQuery = "MATCH (f:File) WHERE f.file_path IN $paths DETACH DELETE f"
-    parameters = { paths: filePaths }
+    -- TDD ANCHOR: TEST that the correct query and parameters are sent to the session
+    -- Execute the query asynchronously
+    result = AWAIT session.run(query, params)
 
-    transaction.run(cypherQuery, parameters)
-
-    -- TEST--_cleanNeo4jBatch commits the transaction on success
-    transaction.commit()
-    LOG `Successfully deleted Neo4j nodes for ${filePaths.length} files.`
+    -- TDD ANCHOR: TEST successful deletion by verifying logs and node count
+    LOG_INFO `Neo4j batch cleanup successful. Nodes deleted: ${result.summary.counters.nodesDeleted()}`
 
   CATCH error
-    -- TEST--_cleanNeo4jBatch rolls back the transaction on failure
-    IF transaction IS NOT NULL
-      transaction.rollback()
-    END IF
-    LOG_ERROR `Failed to clean Neo4j batch. Transaction rolled back. Reason: ${error.message}`
-    -- TEST--_cleanNeo4jBatch throws an error on failure
-    THROW new Error("Neo4j batch deletion failed.")
+    -- If the database query fails, log the error and re-throw it
+    -- to be handled by the calling `run` method's main error handler.
+    LOG_ERROR `Neo4j batch cleanup failed: ${error.message}`
+    -- TDD ANCHOR: TEST that an error during the Neo4j query is properly thrown
+    THROW error
+
+  FINALLY
+    -- TDD ANCHOR: TEST that the session is closed, both on success and failure
+    -- Ensure the session is always closed to prevent resource leaks.
+    AWAIT session.close()
   END TRY
+
 END FUNCTION
+
+-- END _cleanNeo4jBatch
+```
+
+## 3. TDD Anchors
+
+-   **Test Case 1: Null or Empty Input**
+    -   **Given:** The `_cleanNeo4jBatch` method is called with `null` or an empty array.
+    -   **When:** The method executes.
+    -   **Then:** A warning should be logged, and the function should return immediately without attempting a database connection.
+
+-   **Test Case 2: Successful Batch Deletion**
+    -   **Given:** A valid array of file paths corresponding to existing `:File` nodes in Neo4j.
+    -   **When:** The `_cleanNeo4jBatch` method is called.
+    -   **Then:** The `session.run` method should be called with the correct `UNWIND` query and parameters.
+    -   **And:** A success message should be logged, including the count of deleted nodes.
+    -   **And:** The specified nodes should no longer exist in the database.
+    -   **And:** The session should be closed.
+
+-   **Test Case 3: Neo4j Query Failure**
+    -   **Given:** A valid array of file paths.
+    -   **When:** The `session.run` method throws an error (e.g., due to a database connection issue).
+    -   **Then:** An error should be logged.
+    -   **And:** The original error should be re-thrown to the caller.
+    -   **And:** The session should still be closed.

@@ -48,10 +48,10 @@ async function main() {
     console.error('An error occurred during the pipeline execution:', error);
     process.exit(1);
   } finally {
-    if (neo4jDriver) {
+    // In a test environment, the driver is closed by the global teardown
+    if (process.env.NODE_ENV !== 'test' && neo4jDriver) {
       await neo4jDriver.close();
     }
-    // The SQLite connection is closed automatically by the `sqlite` library's connection pooling
   }
 }
 

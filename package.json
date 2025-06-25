@@ -12,7 +12,8 @@
     "test:polyglot": "node run-polyglot-tests.js",
     "test:cognitive": "node run-tests.js",
     "check:polyglot": "node check-polyglot-results.js",
-    "init-db": "node src/utils/initializeDb.js"
+    "init-db": "node src/utils/initializeDb.js",
+    "test:neo4j:ip": "cross-env NEO4J_URI=bolt://127.0.0.1:7687 node test_neo4j_connection.js"
   },
   "dependencies": {
     "ajv": "^8.12.0",

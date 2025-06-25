@@ -1,57 +1,67 @@
-# SelfCleaningAgent `run` Method Pseudocode
+# Pseudocode for SelfCleaningAgent.run()
 
-## FUNCTION run()
+## Description
 
-### Description
-Orchestrates the cleanup of files that have been deleted from the filesystem. This method ensures that the cleanup process is atomic, operating on a batch of files. It first identifies all deleted files. If any are found, it proceeds to delete the corresponding records from both the Neo4j and SQLite databases in atomic, all-or-nothing transactions. The entire operation is wrapped in a try-catch block to handle failures gracefully, ensuring the system remains in a consistent state.
+This document outlines the pseudocode for the `run` method of the `SelfCleaningAgent`. This method orchestrates the cleanup of file records from the databases when files are detected as deleted from the filesystem. The process is designed to be atomic, ensuring that if any part of the cleanup fails, the entire batch operation is rolled back, leaving the system in a consistent state.
 
-### TDD Anchors
--   TEST should do nothing if no files are found to be deleted.
--   TEST should call `_findDeletedFiles` to get the list of files.
--   TEST should call `_cleanNeo4jBatch` with the correct file paths if files are deleted.
--   TEST should call `_cleanSqliteBatch` with the correct file paths if Neo4j cleanup is successful.
--   TEST should NOT call `_cleanSqliteBatch` if `_cleanNeo4jBatch` fails.
--   TEST should log an error and not delete anything if `_cleanNeo4jBatch` fails.
--   TEST should log an error if `_cleanSqliteBatch` fails after Neo4j succeeded.
--   TEST should log success when both cleanup operations succeed.
+## Method-- `run`
+
+### Signature
+
+`FUNCTION run()`
 
 ### Logic
-```pseudocode
-FUNCTION run()
-  -- TEST--run executes cleanup successfully for a batch of deleted files
-  -- TEST--run does nothing when no files are deleted
-  -- TEST--run logs an error and stops if Neo4j batch cleanup fails
-  -- TEST--run logs an error if SQLite batch cleanup fails after Neo4j succeeded
 
-  LOG "SelfCleaningAgent run initiated."
-  
-  -- The _findDeletedFiles method is now responsible for the revised reconciliation logic
-  deletedFiles = CALL _findDeletedFiles() 
-  
-  IF deletedFiles IS NULL OR deletedFiles IS EMPTY
-    LOG "No files to clean up."
-    RETURN
-  END IF
+1.  **Find Deleted Files**
+    *   `deletedFiles = CALL _findDeletedFiles()`
+    *   This helper function identifies files present in the database but no longer on the filesystem.
+    *   **TDD Anchor**: TEST `_findDeletedFiles` is called once when `run` is executed.
 
-  -- Extract just the file paths for the batch operations
-  filePathsToDelete = deletedFiles.map(file => file.file_path)
-  LOG `Found ${filePathsToDelete.length} files for cleanup.`
+2.  **Check for Cleanup Task**
+    *   `IF deletedFiles IS EMPTY THEN`
+        *   `LOG "No files to clean up."`
+        *   `RETURN`
+    *   `END IF`
+    *   **TDD Anchor**: TEST `run` logs "No files to clean up" and exits when `_findDeletedFiles` returns an empty list.
 
-  TRY
-    -- Atomically clean the entire batch from Neo4j in a single transaction
-    -- TEST--run calls _cleanNeo4jBatch with all file paths
-    CALL _cleanNeo4jBatch(filePathsToDelete)
+3.  **Prepare for Batch Deletion**
+    *   `filePathsToDelete = EXTRACT file_path FROM each file IN deletedFiles`
+    *   A list of file paths is created from the `deletedFiles` records for batch deletion.
 
-    -- ONLY if Neo4j cleanup succeeds, atomically clean the entire batch from SQLite
-    -- TEST--run calls _cleanSqliteBatch after successful Neo4j cleanup
-    CALL _cleanSqliteBatch(filePathsToDelete)
+4.  **Atomic Batch Cleanup**
+    *   `TRY`
+        *   `-- Atomically clean the entire batch from Neo4j`
+        *   `CALL _cleanNeo4jBatch(filePathsToDelete)`
+        *   **TDD Anchor**: TEST `_cleanNeo4jBatch` is called with the correct list of file paths when deleted files are found.
 
-    LOG `Successfully cleaned up ${filePathsToDelete.length} files from all data stores.`
+        *   `-- ONLY if Neo4j succeeds, atomically clean the entire batch from SQLite`
+        *   `CALL _cleanSqliteBatch(filePathsToDelete)`
+        *   **TDD Anchor**: TEST `_cleanSqliteBatch` is called with the correct list of file paths after `_cleanNeo4jBatch` completes successfully.
 
-  CATCH error
-    -- This block catches failures from either _cleanNeo4jBatch or _cleanSqliteBatch
-    LOG_ERROR `Failed to complete batch cleanup. The system may be in an inconsistent state. Reason: ${error.message}`
-    -- The error is logged, and the process stops. The state is inconsistent if Neo4j succeeded and SQLite failed.
-    -- The next run of the agent will re-process the files that failed in SQLite.
-  END TRY
-END FUNCTION
+        *   `LOG "Successfully cleaned up ${count of deletedFiles} files."`
+        *   **TDD Anchor**: TEST `run` logs a success message with the correct file count after both batch operations succeed.
+
+    *   `CATCH error`
+        *   `LOG_ERROR "Failed to clean up batch. No records were deleted. Reason-- ${error.message}"`
+        *   `-- The system remains in a consistent state for the next run.`
+        *   **TDD Anchor**: TEST `run` logs an error and performs no deletions if `_cleanNeo4jBatch` fails.
+        *   **TDD Anchor**: TEST `run` logs an error and performs no SQLite deletions if `_cleanSqliteBatch` fails.
+
+    *   `END TRY`
+
+### Dependencies
+
+*   `_findDeletedFiles()`-- Finds files that have been deleted from the filesystem.
+*   `_cleanNeo4jBatch(filePaths)`-- Atomically deletes all nodes and relationships for the given file paths from Neo4j.
+*   `_cleanSqliteBatch(filePaths)`-- Atomically deletes all records for the given file paths from SQLite.
+
+### TDD Anchors
+
+*   **Happy Path**
+    *   TEST `run` successfully orchestrates the deletion of multiple files from both databases.
+    *   TEST `run` logs a success message with the correct count of cleaned files.
+*   **Edge Cases**
+    *   TEST `run` exits early with a log message if no files are found for cleanup.
+*   **Error Handling**
+    *   TEST `run` logs an error if the Neo4j batch cleanup fails and does not proceed to SQLite cleanup.
+    *   TEST `run` logs an error if the SQLite batch cleanup fails.
