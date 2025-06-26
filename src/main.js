@@ -275,9 +275,13 @@ class CognitiveTriangulationPipeline {
 
         // Clear Neo4j database
         console.log('🗑️ Clearing Neo4j database...');
-        const session = neo4jDriverModule.session();
+        const session = this.neo4jDriver.session({ database: config.NEO4J_DATABASE });
         try {
             await session.run('MATCH (n) DETACH DELETE n');
+            console.log('✅ Neo4j database cleared successfully');
+        } catch (error) {
+            console.error('❌ Error clearing Neo4j database:', error);
+            throw error;
         } finally {
             await session.close();
         }

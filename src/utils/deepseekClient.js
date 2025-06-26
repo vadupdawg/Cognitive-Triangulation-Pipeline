@@ -11,6 +11,7 @@ class DeepSeekClient {
     constructor() {
         this.baseURL = 'https://api.deepseek.com';
         this.timeout = 600000; // 10 minutes timeout for complex analysis
+        this.agent = new https.Agent({ keepAlive: true, maxSockets: 100 });
         
         // Lazy load API key to ensure config is loaded
         this._apiKey = null;
@@ -115,7 +116,6 @@ class DeepSeekClient {
     async _makeRequest(endpoint, method, body) {
         return new Promise((resolve, reject) => {
             const url = new URL(this.baseURL + endpoint);
-            
             const options = {
                 hostname: url.hostname,
                 port: url.port || 443,
@@ -126,6 +126,7 @@ class DeepSeekClient {
                     'Authorization': `Bearer ${this.apiKey}`,
                     'Content-Length': Buffer.byteLength(body)
                 },
+                agent: this.agent,
                 timeout: this.timeout
             };
 

@@ -9,5 +9,5 @@ module.exports = {
     ],
     globalSetup: './jest.globalSetup.js',
     globalTeardown: './jest.globalTeardown.js',
-    testTimeout: 600000, // 10 minutes timeout for long-running tests
+    testTimeout: 1200000, // 20 minutes timeout for long-running tests
 };

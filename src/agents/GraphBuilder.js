@@ -1,5 +1,6 @@
 const neo4j = require('neo4j-driver');
 const DatabaseManager = require('../utils/sqliteDb');
+const config = require('../config');
 
 /**
  * GraphBuilder Agent
@@ -187,7 +188,7 @@ class GraphBuilder {
      * Optimized node batch processing with proper labels
      */
     async _runNodeBatchOptimized(batch) {
-        const session = this.neo4jDriver.session({ database: process.env.NEO4J_DATABASE || 'neo4j' });
+        const session = this.neo4jDriver.session({ database: config.NEO4J_DATABASE });
         
         try {
             // Use a single, efficient query that creates nodes with proper labels
