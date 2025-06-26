@@ -11,17 +11,20 @@ const DEFAULT_JOB_OPTIONS = {
   },
 };
 
+const { EventEmitter } = require('events');
+
 class QueueManager {
   constructor() {
     this.activeQueues = new Map();
     this.workers = [];
+    this.events = new EventEmitter();
     const redisURL = new URL(config.REDIS_URL);
     this.connectionOptions = {
       host: redisURL.hostname,
       port: redisURL.port,
       maxRetriesPerRequest: null,
     };
-    if (config.REDIS_PASSWORD) {
+    if (config.REDIS_PASSWORD && config.REDIS_PASSWORD.length > 0) {
       this.connectionOptions.password = config.REDIS_PASSWORD;
     }
   }

@@ -52,8 +52,11 @@ class GlobalResolutionWorker {
         logger.info(`Starting global relationship resolution for runId: ${runId}`);
 
         try {
-            // 1. Load all summaries using pagination
-            const allSummaries = await this._loadAllSummaries(runId);
+            // 1. Load all summaries from the job's dependencies
+            const allSummaries = Object.values(await job.getDependencies())
+                .flat()
+                .map(result => JSON.parse(result));
+
             if (allSummaries.length === 0) {
                 logger.warn(`No directory summaries found for runId: ${runId}. Skipping global resolution.`);
                 return;
@@ -132,22 +135,6 @@ class GlobalResolutionWorker {
      * @param {number} [pageSize=100] - The number of summaries to fetch per page.
      * @returns {Promise<Array<Object>>} A promise that resolves to an array of all summaries.
      */
-    async _loadAllSummaries(runId, pageSize = 100) {
-        let allSummaries = [];
-        let offset = 0;
-        let keepFetching = true;
-
-        while (keepFetching) {
-            const summaries = await this.dbClient.loadDirectorySummaries(runId, pageSize, offset);
-            if (summaries && summaries.length > 0) {
-                allSummaries = allSummaries.concat(summaries);
-                offset += pageSize;
-            } else {
-                keepFetching = false;
-            }
-        }
-        return allSummaries;
-    }
 
     /**
      * Saves relationships to the database using a single bulk INSERT statement.

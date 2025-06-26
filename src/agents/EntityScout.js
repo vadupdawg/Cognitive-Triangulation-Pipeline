@@ -49,7 +49,7 @@ class EntityScout {
                 runId,
                 targetDirectory: this.targetDirectory
             }, {
-                dependencies: directoryJobs.map(job => ({ jobId: job.id, queue: this.directoryResolutionQueue.name }))
+                dependencies: directoryJobs.map(job => ({ jobId: job.id, queue: this.directoryResolutionQueue.name, type: 'completed' }))
             });
             totalJobs++; // Increment for the global job itself
             

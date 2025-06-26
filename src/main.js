@@ -7,6 +7,7 @@ const DirectoryResolutionWorker = require('./workers/directoryResolutionWorker')
 const GlobalResolutionWorker = require('./workers/globalResolutionWorker');
 const config = require('./config');
 const { v4: uuidv4 } = require('uuid');
+const { QueueEvents } = require('bullmq');
 
 class CognitiveTriangulationPipeline {
     constructor(targetDirectory, dbPath = './database.db') {
@@ -48,8 +49,8 @@ class CognitiveTriangulationPipeline {
             console.log(`✅ [main.js] EntityScout created ${totalJobs} jobs with global job ${globalJob.id}`);
 
             console.log('⏳ [main.js] Waiting for global job to complete...');
-            await globalJob.waitUntilFinished(this.queueManager.events);
-            console.log('🎉 [main.js] Global job completed!');
+            await this.waitForCompletion(globalJob);
+            console.log('🎉 [main.js] All jobs completed!');
 
             this.metrics.endTime = new Date();
             await this.printFinalReport();
@@ -58,15 +59,6 @@ class CognitiveTriangulationPipeline {
             console.error('❌ [main.js] Critical error in pipeline execution:', error);
             this.metrics.failedJobs++;
             throw error;
-        } finally {
-            console.log('🚀 [main.js] Closing connections...');
-            await this.queueManager.closeConnections();
-            const driver = neo4jDriver;
-            if (process.env.NODE_ENV !== 'test' && driver) {
-                await driver.close();
-            }
-            this.dbManager.close();
-            console.log('✅ [main.js] Connections closed.');
         }
     }
 
@@ -83,7 +75,8 @@ class CognitiveTriangulationPipeline {
         db.exec('DELETE FROM relationships');
         db.exec('DELETE FROM pois');
         db.exec('DELETE FROM files');
-        
+        db.exec('DELETE FROM directory_summaries');
+
         const driver = neo4jDriver;
         console.log('🗑️ Clearing Neo4j database...');
         const session = driver.session({ database: config.NEO4J_DATABASE });
@@ -106,6 +99,37 @@ class CognitiveTriangulationPipeline {
         console.log(`⏱️  Total Duration: ${durationSeconds} seconds`);
         console.log(`📈 Total Jobs Created: ${this.metrics.totalJobs}`);
         console.log(`=========================================\n`);
+    }
+    async waitForCompletion(globalJob) {
+        if (!globalJob) {
+            console.log('No global job to wait for. Skipping wait.');
+            return;
+        }
+
+        const queueName = globalJob.queueName;
+        const queueEvents = new QueueEvents(queueName, { connection: this.queueManager.connectionOptions });
+
+        try {
+            await globalJob.waitUntilFinished(queueEvents);
+            console.log(`Global job ${globalJob.id} completed successfully.`);
+        } catch (error) {
+            console.error(`Error waiting for global job ${globalJob.id} to complete.`, error);
+            throw error; // Re-throw the error to be caught by the run method's catch block
+        } finally {
+            await queueEvents.close();
+        }
+    }
+
+    async close() {
+        console.log('🚀 [main.js] Closing connections...');
+        await this.queueManager.closeConnections();
+        const driver = neo4jDriver;
+        // In test environments, the driver is managed by the test suite.
+        if (process.env.NODE_ENV !== 'test' && driver) {
+            await driver.close();
+        }
+        this.dbManager.close();
+        console.log('✅ [main.js] Connections closed.');
     }
 }
 
