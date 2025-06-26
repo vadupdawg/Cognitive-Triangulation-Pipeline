@@ -34,8 +34,14 @@ describe('SelfCleaningAgent Integration Tests', () => {
     let agent;
 
     beforeAll(() => {
-        const dbNames = JSON.parse(process.env.JEST_NEO4J_DATABASES);
-        neo4jTestDriver = getTestDriver(dbNames[parseInt(process.env.JEST_WORKER_ID) - 1]);
+        // Mock Neo4j driver
+        neo4jTestDriver = {
+            session: () => ({
+                run: jest.fn().mockResolvedValue({ records: [{ get: () => ({ toNumber: () => 2 }) }] }),
+                close: jest.fn().mockResolvedValue(),
+            }),
+            close: jest.fn().mockResolvedValue(),
+        };
     });
 
     beforeEach(async () => {

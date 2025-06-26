@@ -3,6 +3,7 @@ const { Queue, Worker } = require('bullmq');
 const QueueManager = require('../../../src/utils/queueManager');
 const DirectoryResolutionWorker = require('../../../src/workers/directoryResolutionWorker');
 const GlobalResolutionWorker = require('../../../src/workers/globalResolutionWorker');
+const { DatabaseManager } = require('../../../src/utils/sqliteDb');
 
 // Mock dependencies
 jest.mock('bullmq');
@@ -51,18 +52,18 @@ describe('Hierarchical Job Integration Tests', () => {
         if (queueName === 'directory-resolution-queue') return mockDirectoryQueue;
         if (queueName === 'global-resolution-queue') return mockGlobalQueue;
         return null;
-      }),
       createWorker: jest.fn((queueName, processor) => {
         // Return a mock worker that we can control
-        return { processor };
-      }),
+        const worker = new EventEmitter();
+        worker.processor = processor;
+        return worker;
     };
     QueueManager.mockImplementation(() => mockQueueManager);
   });
 
   // Test Case DRW-01
   test('DirectoryResolutionWorker should only run after its file analysis dependencies are met', async () => {
-    const dirWorker = new DirectoryResolutionWorker();
+    const dirWorker = new DirectoryResolutionWorker(mockQueueManager, null, new DatabaseManager(':memory:'));
     const processor = dirWorker.processJob;
 
     const childJobs = [
@@ -92,7 +93,7 @@ describe('Hierarchical Job Integration Tests', () => {
 
   // Test Case GRW-01
   test('GlobalResolutionWorker should only run after its directory resolution dependencies are met', async () => {
-    const globalWorker = new GlobalResolutionWorker();
+    const globalWorker = new GlobalResolutionWorker(mockQueueManager, null, new DatabaseManager(':memory:'));
     const processor = globalWorker.processJob;
 
     const childJobs = [

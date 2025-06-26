@@ -1,6 +1,8 @@
 const RelationshipResolutionWorker = require('../../../src/workers/relationshipResolutionWorker');
 const LLMClient = require('../../../src/utils/deepseekClient');
-const DatabaseClient = require('../../../src/utils/sqliteDb');
+const { DatabaseManager } = require('../../../src/utils/sqliteDb');
+jest.mock('../../../src/utils/sqliteDb');
+jest.mock('../../../src/utils/sqliteDb');
 const QueueManager = require('../../../src/utils/queueManager');
 
 // Mock dependencies
@@ -23,7 +25,7 @@ describe('RelationshipResolutionWorker', () => {
       loadDirectorySummaries: jest.fn(),
       saveRelationships: jest.fn(),
     };
-    DatabaseClient.mockImplementation(() => mockDbClient);
+    DatabaseManager.mockImplementation(() => mockDbClient);
 
     mockLlmClient = {
       query: jest.fn(),

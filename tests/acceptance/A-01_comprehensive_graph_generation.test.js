@@ -1,4 +1,4 @@
-const neo4j = require('neo4j-driver');
+const { getDriver } = require('../test-utils');
 const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
@@ -11,7 +11,7 @@ describe('Acceptance Test A-01-- Comprehensive Graph Generation', () => {
     beforeAll(async () => {
         // NOTE-- This assumes the Neo4j instance is running and accessible.
         // Configuration should be externalized in a real-world scenario.
-        driver = neo4j.driver('neo4j://localhost', neo4j.auth.basic('neo4j', 'password'));
+        driver = getDriver();
         session = driver.session();
         
         // Ensure the database is in a clean state before the test run

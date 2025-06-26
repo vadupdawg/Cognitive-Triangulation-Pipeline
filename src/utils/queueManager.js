@@ -109,4 +109,4 @@ class QueueManager {
   }
 }
 
-module.exports = new QueueManager();
+module.exports = QueueManager;

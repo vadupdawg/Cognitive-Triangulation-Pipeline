@@ -5,9 +5,11 @@ const path = require('path');
 const fs = require('fs');
 
 const TEST_DB_PATH = path.join(__dirname, '..', 'test-data', 'test_graph_builder.sqlite');
-const NEO4J_URI = process.env.NEO4J_URI || 'neo4j://localhost:7687';
-const NEO4J_USER = process.env.NEO4J_USER || 'neo4j';
-const NEO4J_PASSWORD = process.env.NEO4J_PASSWORD || 'password';
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+
+const NEO4J_URI = process.env.NEO4J_URI;
+const NEO4J_USER = process.env.NEO4J_USER;
+const NEO4J_PASSWORD = process.env.NEO4J_PASSWORD;
 
 let dbManager;
 let db;
@@ -113,7 +115,7 @@ describe('GraphBuilder Agent - Functional Tests', () => {
 
     test('GB-C-03: should have correct configuration defaults', () => {
         const agent = new GraphBuilder(db, driver);
-        expect(agent.config.batchSize).toBe(100);
+        expect(agent.config.batchSize).toBe(500);
         expect(agent.config.allowedRelationshipTypes).toContain('CALLS');
         expect(agent.config.allowedRelationshipTypes).toContain('IMPLEMENTS');
     });

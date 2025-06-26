@@ -3,87 +3,89 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 class EntityScout {
-    constructor(queueManager) {
-        this.fileAnalysisQueue = queueManager.getQueue('file-analysis-queue');
-        this.graphBuildQueue = queueManager.getQueue('graph-build-queue');
-        this.directoryResolutionQueue = queueManager.getQueue('directory-resolution-queue');
-        this.globalResolutionQueue = queueManager.getQueue('global-resolution-queue');
+    constructor(queueManager, targetDirectory) {
+        this.queueManager = queueManager;
+        this.targetDirectory = targetDirectory;
+        this.fileAnalysisQueue = this.queueManager.getQueue('file-analysis-queue');
+        this.directoryResolutionQueue = this.queueManager.getQueue('directory-resolution-queue');
+        this.globalResolutionQueue = this.queueManager.getQueue('global-resolution-queue');
     }
 
     async run() {
         const runId = uuidv4();
-        console.log(`Starting EntityScout run with ID: ${runId}`);
+        console.log(`Starting EntityScout run with ID: ${runId} for directory ${this.targetDirectory}`);
 
         try {
-            const parentJob = await this._createParentJob(runId);
-            console.log(`Parent job ${parentJob.id} created for run ${runId}`);
+            const fileMap = await this._discoverFiles(this.targetDirectory);
+            const filePaths = Object.values(fileMap).flat();
 
-            const fileMap = await this._discoverFiles();
-
-            if (Object.keys(fileMap).length === 0) {
+            if (filePaths.length === 0) {
                 console.log(`No files discovered for analysis. Run ${runId} complete.`);
-                return;
+                return { globalJob: null, totalJobs: 0 };
             }
+            
+            const globalJob = await this.globalResolutionQueue.add('resolve-global', { runId, targetDirectory: this.targetDirectory });
+            console.log(`Global parent job ${globalJob.id} created for run ${runId}`);
 
-            const dirJobIds = [];
-            for (const dirPath in fileMap) {
-                const dirJob = await this.directoryResolutionQueue.add('resolve-directory', { directoryPath: dirPath, runId }, {});
-                dirJobIds.push(dirJob.id);
+            const directoryJobs = [];
+            let totalJobs = 1; // Start with 1 for the global job
 
-                const filePaths = fileMap[dirPath];
-                const childJobs = await this._createFileAnalysisJobs(filePaths, runId);
-                const childJobIds = childJobs.map(job => job.id);
+            for (const [dirPath, files] of Object.entries(fileMap)) {
+                const fileAnalysisJobs = await this.fileAnalysisQueue.addBulk(
+                    files.map(filePath => ({ name: 'analyze-file', data: { filePath, runId, directory: dirPath } }))
+                );
+                totalJobs += fileAnalysisJobs.length;
 
-                await dirJob.addDependencies({ jobs: childJobIds });
+                const directoryJob = await this.directoryResolutionQueue.add('resolve-directory', {
+                    directoryPath: dirPath,
+                    runId,
+                }, {
+                    dependencies: fileAnalysisJobs.map(job => ({ jobId: job.id, queue: this.fileAnalysisQueue.name }))
+                });
+                directoryJobs.push(directoryJob);
+                totalJobs++;
             }
+            
+            // The `addDependencies` method is not a feature of BullMQ's Queue object.
+            // Dependencies should be declared at job creation time.
+            // This line is removed as it causes a runtime error.
+            // The dependency logic is already handled when creating the directory jobs.
 
-            await parentJob.addDependencies({ jobs: dirJobIds });
+            console.log(`EntityScout run ${runId} successfully orchestrated ${totalJobs} jobs.`);
+            return { globalJob, totalJobs };
 
-            console.log(`EntityScout run ${runId} successfully orchestrated.`);
         } catch (error) {
-            console.error(`EntityScout run failed: ${error.message}`);
+            console.error(`EntityScout run failed: ${error.message}`, error.stack);
             throw error;
         }
     }
 
-    async _createParentJob(runId) {
-        return await this.globalResolutionQueue.add('resolve-global', { runId }, {});
-    }
-
-    async _createFileAnalysisJobs(filePaths, runId) {
-        if (!filePaths || filePaths.length === 0) {
-            return [];
-        }
-
-        const jobsToCreate = filePaths.map(filePath => ({
-            name: 'analyze-file',
-            data: { filePath, runId },
-        }));
-
-        return await this.fileAnalysisQueue.addBulk(jobsToCreate);
-    }
-
-    async _discoverFiles(dir = '.') {
+    async _discoverFiles(directory) {
         const fileMap = {};
-        const entries = await fs.readdir(dir, { withFileTypes: true });
+        const ignoreDirs = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage']);
 
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-                if (entry.name === 'node_modules' || entry.name.startsWith('.')) {
-                    continue;
+        async function recursiveDiscover(currentDir) {
+            try {
+                const entries = await fs.readdir(currentDir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const fullPath = path.join(currentDir, entry.name);
+                    if (entry.isDirectory()) {
+                        if (!ignoreDirs.has(entry.name)) {
+                            await recursiveDiscover(fullPath);
+                        }
+                    } else {
+                        if (!fileMap[currentDir]) {
+                            fileMap[currentDir] = [];
+                        }
+                        fileMap[currentDir].push(fullPath);
+                    }
                 }
-                const subMap = await this._discoverFiles(fullPath);
-                Object.assign(fileMap, subMap);
-            } else if (entry.isFile() && entry.name.endsWith('.js')) {
-                const dirPath = path.dirname(fullPath);
-                if (!fileMap[dirPath]) {
-                    fileMap[dirPath] = [];
-                }
-                fileMap[dirPath].push(fullPath);
+            } catch (error) {
+                console.error(`Error reading directory ${currentDir}:`, error);
             }
         }
 
+        await recursiveDiscover(directory);
         return fileMap;
     }
 }

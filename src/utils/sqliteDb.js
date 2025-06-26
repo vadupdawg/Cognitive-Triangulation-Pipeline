@@ -50,6 +50,24 @@ class DatabaseManager {
             this.db = null;
         }
     }
+
+    /**
+     * Loads all Points of Interest (POIs) for a given directory, with pagination.
+     * @param {string} directoryPath - The path of the directory to load POIs for.
+     * @param {number} limit - The number of POIs to retrieve.
+     * @param {number} offset - The starting offset for retrieval.
+     * @returns {Array<object>} A promise that resolves to an array of POI objects.
+     */
+    loadPoisForDirectory(directoryPath, limit, offset) {
+        const db = this.getDb();
+        const sql = `
+            SELECT * FROM pois
+            WHERE file_path LIKE ?
+            LIMIT ? OFFSET ?;
+        `;
+        const statement = db.prepare(sql);
+        return statement.all(`${directoryPath}%`, limit, offset);
+    }
 }
 
 // Global database manager instance

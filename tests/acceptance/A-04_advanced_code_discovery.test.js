@@ -1,7 +1,7 @@
-const neo4j = require('neo4j-driver');
+const { getDriver } = require('../test-utils');
 const { exec } = require('child_process');
 const util = require('util');
-const { clearDatabase, getDriver } = require('../test_utils');
+const { getDriver } = require('../test-utils');
 const execPromise = util.promisify(exec);
 
 describe('Acceptance Test A-04-- Advanced Code Discovery and Queryability', () => {

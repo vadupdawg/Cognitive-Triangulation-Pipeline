@@ -27,28 +27,28 @@ class SelfCleaningAgent {
 
     async reconcile() {
         // Mark phase: Find files that exist in DB but not on filesystem
-        const dbFiles = this.sqliteDb.prepare('SELECT file_path FROM files WHERE status != ?').all('PENDING_DELETION');
+        const dbFiles = this.sqliteDb.prepare('SELECT path FROM files WHERE status != ?').all('PENDING_DELETION');
         
         for (const file of dbFiles) {
-            const fullPath = path.join(this.projectRoot, file.file_path);
+            const fullPath = path.join(this.projectRoot, file.path);
             if (!fs.existsSync(fullPath)) {
                 // Mark for deletion
-                this.sqliteDb.prepare('UPDATE files SET status = ? WHERE file_path = ?')
-                    .run('PENDING_DELETION', file.file_path);
+                this.sqliteDb.prepare('UPDATE files SET status = ? WHERE path = ?')
+                                    .run('PENDING_DELETION', file.path);
             }
         }
     }
 
     async run() {
         // Sweep phase: Delete files marked for deletion
-        const filesToDelete = this.sqliteDb.prepare('SELECT file_path FROM files WHERE status = ?').all('PENDING_DELETION');
+        const filesToDelete = this.sqliteDb.prepare('SELECT path FROM files WHERE status = ?').all('PENDING_DELETION');
         
         if (filesToDelete.length === 0) {
             console.log('No files to clean up.');
             return;
         }
 
-        const filePaths = filesToDelete.map(f => f.file_path);
+        const filePaths = filesToDelete.map(f => f.path);
         
         try {
             // Clean Neo4j first
@@ -78,7 +78,7 @@ class SelfCleaningAgent {
 
     async _cleanSqliteBatch(filePaths) {
         const placeholders = filePaths.map(() => '?').join(',');
-        this.sqliteDb.prepare(`DELETE FROM files WHERE file_path IN (${placeholders})`).run(...filePaths);
+        this.sqliteDb.prepare(`DELETE FROM files WHERE path IN (${placeholders})`).run(...filePaths);
     }
 }
 

@@ -11,7 +11,8 @@ class FileAnalysisWorker {
         this.llmResponseSanitizer = llmResponseSanitizer;
         this.sqliteDb = sqliteDb;
         this.deepseekClient = deepseekClient;
-        this.worker = this.queueManager.createWorker('file-analysis-queue', this.processJob.bind(this), { concurrency });
+        // The worker should be created and managed by the main pipeline, not the worker itself.
+        // this.worker = this.queueManager.createWorker('file-analysis-queue', this.processJob.bind(this), { concurrency });
     }
 
     async processJob(job) {

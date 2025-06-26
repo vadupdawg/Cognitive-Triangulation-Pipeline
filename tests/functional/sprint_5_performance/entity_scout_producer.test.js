@@ -107,13 +107,26 @@ describe('EntityScout as a Job Producer', () => {
     await entityScout.run();
 
     expect(mockAnalysisQueue.addBulk).toHaveBeenCalledTimes(2); // Once for each directory
-    expect(mockAnalysisQueue.addBulk).toHaveBeenCalledWith([
-      { name: 'analyze-file', data: { filePath: '/project/dir1/file1.js', runId: expect.any(String) } },
-      { name: 'analyze-file', data: { filePath: '/project/dir1/file2.js', runId: expect.any(String) } },
-    ]);
-    expect(mockAnalysisQueue.addBulk).toHaveBeenCalledWith([
-      { name: 'analyze-file', data: { filePath: '/project/dir2/file3.js', runId: expect.any(String) } },
-    ]);
+    expect(mockAnalysisQueue.addBulk).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'analyze-file',
+          data: expect.objectContaining({ filePath: '/project/dir1/file1.js' }),
+        }),
+        expect.objectContaining({
+          name: 'analyze-file',
+          data: expect.objectContaining({ filePath: '/project/dir1/file2.js' }),
+        }),
+      ])
+    );
+    expect(mockAnalysisQueue.addBulk).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'analyze-file',
+          data: expect.objectContaining({ filePath: '/project/dir2/file3.js' }),
+        }),
+      ])
+    );
   });
   
   // Test Cases ESP-04 & ESP-05
@@ -134,13 +147,25 @@ describe('EntityScout as a Job Producer', () => {
     await entityScout.run();
 
     // ESP-04: Verify file jobs are linked to directory job
-    expect(mockDirJob.addDependencies).toHaveBeenCalledWith({
-        jobs: ['file-job-id-1']
-    });
+    expect(mockDirectoryQueue.add).toHaveBeenCalledWith(
+      'resolve-directory',
+      expect.any(Object),
+      expect.objectContaining({
+        dependencies: expect.arrayContaining([
+          expect.objectContaining({ jobId: 'file-job-id-1' }),
+        ]),
+      })
+    );
 
     // ESP-05: Verify directory job is linked to global job
-    expect(mockGlobalJob.addDependencies).toHaveBeenCalledWith({
-        jobs: ['dir-job-id']
-    });
+    expect(mockGlobalQueue.add).toHaveBeenCalledWith(
+      'resolve-global',
+      expect.any(Object),
+      expect.objectContaining({
+        dependencies: expect.arrayContaining([
+          expect.objectContaining({ jobId: 'dir-job-id' }),
+        ]),
+      })
+    );
   });
 });
