@@ -27,3 +27,12 @@ CREATE TABLE IF NOT EXISTS relationships (
     FOREIGN KEY (source_poi_id) REFERENCES pois (id) ON DELETE CASCADE,
     FOREIGN KEY (target_poi_id) REFERENCES pois (id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS directory_summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    directory_path TEXT NOT NULL,
+    summary_text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_id, directory_path)
+);

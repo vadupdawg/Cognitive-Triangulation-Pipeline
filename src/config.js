@@ -21,6 +21,10 @@ const config = {
   // Agent-specific Configuration
   INGESTOR_BATCH_SIZE: parseInt(process.env.INGESTOR_BATCH_SIZE, 10) || 100,
   INGESTOR_INTERVAL_MS: parseInt(process.env.INGESTOR_INTERVAL_MS, 10) || 10000,
+
+  // Redis Configuration
+  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+  REDIS_PASSWORD: process.env.REDIS_PASSWORD || undefined,
 };
 
 // Security Hardening: Prevent startup with default password in production

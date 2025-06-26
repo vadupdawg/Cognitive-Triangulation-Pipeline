@@ -19,9 +19,11 @@ class QueueManager {
     this.connectionOptions = {
       host: redisURL.hostname,
       port: redisURL.port,
-      password: config.REDIS_PASSWORD,
       maxRetriesPerRequest: null,
     };
+    if (config.REDIS_PASSWORD) {
+      this.connectionOptions.password = config.REDIS_PASSWORD;
+    }
   }
 
   getQueue(queueName) {

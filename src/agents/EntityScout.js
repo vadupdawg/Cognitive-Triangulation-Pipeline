@@ -24,11 +24,8 @@ class EntityScout {
                 return { globalJob: null, totalJobs: 0 };
             }
             
-            const globalJob = await this.globalResolutionQueue.add('resolve-global', { runId, targetDirectory: this.targetDirectory });
-            console.log(`Global parent job ${globalJob.id} created for run ${runId}`);
-
             const directoryJobs = [];
-            let totalJobs = 1; // Start with 1 for the global job
+            let totalJobs = 0;
 
             for (const [dirPath, files] of Object.entries(fileMap)) {
                 const fileAnalysisJobs = await this.fileAnalysisQueue.addBulk(
@@ -40,17 +37,23 @@ class EntityScout {
                     directoryPath: dirPath,
                     runId,
                 }, {
+                    // This job depends on all file analysis jobs for the files in its directory
                     dependencies: fileAnalysisJobs.map(job => ({ jobId: job.id, queue: this.fileAnalysisQueue.name }))
                 });
                 directoryJobs.push(directoryJob);
                 totalJobs++;
             }
-            
-            // The `addDependencies` method is not a feature of BullMQ's Queue object.
-            // Dependencies should be declared at job creation time.
-            // This line is removed as it causes a runtime error.
-            // The dependency logic is already handled when creating the directory jobs.
 
+            // The global resolution job depends on all directory resolution jobs
+            const globalJob = await this.globalResolutionQueue.add('resolve-global', {
+                runId,
+                targetDirectory: this.targetDirectory
+            }, {
+                dependencies: directoryJobs.map(job => ({ jobId: job.id, queue: this.directoryResolutionQueue.name }))
+            });
+            totalJobs++; // Increment for the global job itself
+            
+            console.log(`Global parent job ${globalJob.id} created for run ${runId}, depending on ${directoryJobs.length} directory jobs.`);
             console.log(`EntityScout run ${runId} successfully orchestrated ${totalJobs} jobs.`);
             return { globalJob, totalJobs };
 

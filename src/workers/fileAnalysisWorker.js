@@ -10,9 +10,11 @@ class FileAnalysisWorker {
         this.queueManager = queueManager;
         this.llmResponseSanitizer = llmResponseSanitizer;
         this.sqliteDb = sqliteDb;
-        this.deepseekClient = deepseekClient;
-        // The worker should be created and managed by the main pipeline, not the worker itself.
-        // this.worker = this.queueManager.createWorker('file-analysis-queue', this.processJob.bind(this), { concurrency });
+        this.deepseekClient = deepseekClient || require('../utils/deepseekClient').getDeepseekClient();
+        this.worker = new BullMQ.Worker('file-analysis-queue', this.processJob.bind(this), {
+            connection: this.queueManager.connectionOptions,
+            concurrency
+        });
     }
 
     async processJob(job) {
@@ -96,6 +98,7 @@ Provide your response as a single, minified JSON object with two keys: "pois" an
 
 File content to be analyzed is below:
 <file_content>
+<file_content>
 ${fileContent}
 </file_content>
 `;
@@ -108,16 +111,17 @@ ${fileContent}
                 return await this.deepseekClient.query(prompt);
             } catch (error) {
                 attempt++;
+                console.error(`LLM query attempt ${attempt} failed with error: ${error.message}`);
+                console.error(`Prompt: ${prompt}`);
                 if (attempt >= maxRetries) {
                     throw new Error(`LLM query failed after ${maxRetries} attempts: ${error.message}`);
                 }
                 const delay = initialDelay * Math.pow(2, attempt - 1);
-                console.log(`LLM query attempt ${attempt} failed. Retrying in ${delay}ms...`);
+                console.log(`Retrying in ${delay}ms...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
         }
     }
-
     async _saveResults(analysisResults, transaction) {
         const { pois, relationships } = analysisResults;
 

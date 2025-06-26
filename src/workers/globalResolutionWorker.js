@@ -12,11 +12,11 @@ class GlobalResolutionWorker {
      */
     constructor(queueManager, llmClient, dbClient, concurrency = 1) {
         this.llmClient = llmClient;
-        this.dbClient = dbClient || new DatabaseManager(process.env.SQLITE_DB_PATH || './database.db');
-        this.worker = queueManager.createWorker(
+        this.dbClient = dbClient;
+        this.worker = new Worker(
             'global-resolution-queue',
             this.processJob.bind(this),
-            { concurrency }
+            { connection: queueManager.connectionOptions, concurrency }
         );
 
         if (this.worker) {

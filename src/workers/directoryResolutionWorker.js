@@ -18,9 +18,9 @@ class DirectoryResolutionWorker {
    * @param {DatabaseManager} dbClient - An instance of DatabaseManager for DB operations.
    */
   constructor(queueManager, llmClient, dbClient) {
-    this.queueManager = queueManager || new QueueManager();
+    this.queueManager = queueManager;
     this.llmClient = llmClient || getDeepseekClient();
-    this.dbClient = dbClient || new DatabaseManager();
+    this.dbClient = dbClient;
     this.worker = new Worker(
       'directory-resolution-queue',
       this.processJob.bind(this),
@@ -76,6 +76,7 @@ class DirectoryResolutionWorker {
         hasMore = false;
       }
     }
+    await this._createAndSaveDirectorySummary(directoryPath, job.data.runId);
   }
 
   /**
@@ -136,6 +137,22 @@ class DirectoryResolutionWorker {
       sql,
       values
     );
+  }
+
+  async _createAndSaveDirectorySummary(directoryPath, runId) {
+    const summaryPrompt = `
+      Based on the analysis of the files in the directory "${directoryPath}", provide a concise, one-paragraph summary of the directory's primary role and functionality.
+      Focus on the overall purpose of the components within this directory and how they might interact with other parts of the system.
+    `;
+    const summaryText = await this.llmClient.query(summaryPrompt);
+
+    const sql = `
+      INSERT INTO directory_summaries (run_id, directory_path, summary_text)
+      VALUES (?, ?, ?)
+      ON CONFLICT(run_id, directory_path) DO UPDATE SET summary_text = excluded.summary_text;
+    `;
+    await this.dbClient.execute({}, sql, [runId, directoryPath, summaryText]);
+    console.log(`✅ [DirectoryResolutionWorker] Saved summary for directory: ${directoryPath}`);
   }
 }
 

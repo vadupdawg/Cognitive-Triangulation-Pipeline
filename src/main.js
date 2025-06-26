@@ -31,43 +31,43 @@ class CognitiveTriangulationPipeline {
         await this.clearDatabases();
         console.log('✅ [main.js] Databases and clients initialized successfully');
     }
-async run() {
-    console.log('🚀 [main.js] Pipeline run started.');
-    this.metrics.startTime = new Date();
-    try {
-        await this.initialize();
 
-        console.log('🏁 [main.js] Starting workers...');
-        this.startWorkers();
+    async run() {
+        console.log('🚀 [main.js] Pipeline run started.');
+        this.metrics.startTime = new Date();
+        try {
+            await this.initialize();
 
-        console.log('🔍 [main.js] Starting EntityScout to produce jobs...');
-        const entityScout = new EntityScout(this.queueManager, this.targetDirectory, this.runId);
-        const { globalJob, totalJobs } = await entityScout.run();
-        this.metrics.totalJobs = totalJobs;
-        console.log(`✅ [main.js] EntityScout created ${totalJobs} jobs with global job ${globalJob.id}`);
+            console.log('🏁 [main.js] Starting workers...');
+            this.startWorkers();
 
-        console.log('⏳ [main.js] Waiting for global job to complete...');
-        await globalJob.waitUntilFinished(this.queueManager.events);
-        console.log('🎉 [main.js] Global job completed!');
+            console.log('🔍 [main.js] Starting EntityScout to produce jobs...');
+            const entityScout = new EntityScout(this.queueManager, this.targetDirectory, this.runId);
+            const { globalJob, totalJobs } = await entityScout.run();
+            this.metrics.totalJobs = totalJobs;
+            console.log(`✅ [main.js] EntityScout created ${totalJobs} jobs with global job ${globalJob.id}`);
 
-        this.metrics.endTime = new Date();
-        await this.printFinalReport();
+            console.log('⏳ [main.js] Waiting for global job to complete...');
+            await globalJob.waitUntilFinished(this.queueManager.events);
+            console.log('🎉 [main.js] Global job completed!');
 
-    } catch (error) {
-        console.error('❌ [main.js] Critical error in pipeline execution:', error);
-        this.metrics.failedJobs++;
-        throw error;
-    } finally {
-        console.log('🚀 [main.js] Closing connections...');
-        await this.queueManager.closeConnections();
-        const driver = neo4jDriver;
-        if (process.env.NODE_ENV !== 'test' && driver) {
-            await driver.close();
+            this.metrics.endTime = new Date();
+            await this.printFinalReport();
+
+        } catch (error) {
+            console.error('❌ [main.js] Critical error in pipeline execution:', error);
+            this.metrics.failedJobs++;
+            throw error;
+        } finally {
+            console.log('🚀 [main.js] Closing connections...');
+            await this.queueManager.closeConnections();
+            const driver = neo4jDriver;
+            if (process.env.NODE_ENV !== 'test' && driver) {
+                await driver.close();
+            }
+            this.dbManager.close();
+            console.log('✅ [main.js] Connections closed.');
         }
-        this.dbManager.close();
-        console.log('✅ [main.js] Connections closed.');
-    }
-}
     }
 
     startWorkers() {
