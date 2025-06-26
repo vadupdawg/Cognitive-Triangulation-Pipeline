@@ -62,12 +62,11 @@ describe('QueueManager', () => {
     const processor = jest.fn();
     
     const worker = queueManager.createWorker(queueName, processor);
-expect(Worker).toHaveBeenCalledWith(queueName, processor,
-  expect.objectContaining({
-    stalledInterval: 30000, // As per specs
-  })
-);
-    });
+    expect(Worker).toHaveBeenCalledWith(queueName, processor,
+      expect.objectContaining({
+        stalledInterval: 30000, // As per specs
+      })
+    );
   });
 
   // Test Case QM-04 - This is more of an integration test, but we can test the setup.
@@ -84,20 +83,22 @@ expect(Worker).toHaveBeenCalledWith(queueName, processor,
 
     // Verify that the 'failed' event listener was attached
     expect(mockQueueInstance.on).toHaveBeenCalledWith('failed', expect.any(Function));
+  });
 
-  test('closeConnections should close all active queues and the redis connection', async () => {
-    const mockQueue1 = { close: jest.fn().mockResolvedValue() };
-    const mockQueue2 = { close: jest.fn().mockResolvedValue() };
-    const mockRedisConnection = { quit: jest.fn().mockResolvedValue() };
+  test('closeConnections should close all active queues and workers', async () => {
+    const mockQueue1 = { close: jest.fn().mockResolvedValue(), name: 'q1' };
+    const mockQueue2 = { close: jest.fn().mockResolvedValue(), name: 'q2' };
+    const mockWorker1 = { close: jest.fn().mockResolvedValue(), name: 'w1' };
 
     // Setup mocks
     queueManager.activeQueues.set('q1', mockQueue1);
     queueManager.activeQueues.set('q2', mockQueue2);
-    queueManager.redisConnection = mockRedisConnection;
+    queueManager.workers.push(mockWorker1);
 
     await queueManager.closeConnections();
 
     expect(mockQueue1.close).toHaveBeenCalledTimes(1);
     expect(mockQueue2.close).toHaveBeenCalledTimes(1);
-    expect(mockRedisConnection.quit).toHaveBeenCalledTimes(0);
+    expect(mockWorker1.close).toHaveBeenCalledTimes(1);
   });
+});

@@ -1,7 +1,6 @@
 const { getDriver } = require('../test-utils');
 const { exec } = require('child_process');
 const util = require('util');
-const { getDriver } = require('../test-utils');
 const execPromise = util.promisify(exec);
 
 describe('Acceptance Test A-05-- Hierarchical Analysis Validation', () => {

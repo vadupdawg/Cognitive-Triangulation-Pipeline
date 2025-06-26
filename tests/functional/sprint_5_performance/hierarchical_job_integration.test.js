@@ -48,15 +48,17 @@ describe('Hierarchical Job Integration Tests', () => {
     mockGlobalQueue = { on: jest.fn() };
 
     mockQueueManager = {
-      getQueue: jest.fn(queueName => {
+      getQueue: jest.fn((queueName) => {
         if (queueName === 'directory-resolution-queue') return mockDirectoryQueue;
         if (queueName === 'global-resolution-queue') return mockGlobalQueue;
         return null;
+      }),
       createWorker: jest.fn((queueName, processor) => {
         // Return a mock worker that we can control
         const worker = new EventEmitter();
         worker.processor = processor;
         return worker;
+      })
     };
     QueueManager.mockImplementation(() => mockQueueManager);
   });
@@ -64,14 +66,14 @@ describe('Hierarchical Job Integration Tests', () => {
   // Test Case DRW-01
   test('DirectoryResolutionWorker should only run after its file analysis dependencies are met', async () => {
     const dirWorker = new DirectoryResolutionWorker(mockQueueManager, null, new DatabaseManager(':memory:'));
-    const processor = dirWorker.processJob;
+    const processor = dirWorker.processJob.bind(dirWorker);
 
     const childJobs = [
       { id: 'file1', state: 'completed' },
       { id: 'file2', state: 'completed' },
     ];
     
-    const parentJob = new MockJob('resolve-directory', { path: '/project/dir1' }, { dependencies: childJobs });
+    const parentJob = new MockJob('resolve-directory', { directoryPath: '/project/dir1' }, { dependencies: childJobs });
     
     // Simulate BullMQ checking if the job is ready to run
     const isWaiting = await parentJob.isWaiting();
@@ -83,35 +85,35 @@ describe('Hierarchical Job Integration Tests', () => {
     
     // If it's not waiting, the processor would be called.
     // We can simulate this call to check the worker's logic.
-    dirWorker.db = { loadPoisForDirectory: jest.fn().mockResolvedValue([]) };
+    dirWorker.dbClient = { loadPoisForDirectory: jest.fn().mockResolvedValue([]) };
     dirWorker.llmClient = { query: jest.fn().mockResolvedValue({ relationships: [] }) };
     dirWorker.graphBuildQueue = { add: jest.fn() };
 
     await processor(parentJob);
-    expect(dirWorker.db.loadPoisForDirectory).toHaveBeenCalled();
+    expect(dirWorker.dbClient.loadPoisForDirectory).toHaveBeenCalled();
   });
 
   // Test Case GRW-01
   test('GlobalResolutionWorker should only run after its directory resolution dependencies are met', async () => {
     const globalWorker = new GlobalResolutionWorker(mockQueueManager, null, new DatabaseManager(':memory:'));
-    const processor = globalWorker.processJob;
+    const processor = globalWorker.processJob.bind(globalWorker);
 
     const childJobs = [
       { id: 'dir1', state: 'completed' },
       { id: 'dir2', state: 'completed' },
     ];
 
-    const parentJob = new MockJob('resolve-global', {}, { dependencies: childJobs });
+    const parentJob = new MockJob('resolve-global', { runId: 'test-run-id' }, { dependencies: childJobs });
 
     const isWaiting = await parentJob.isWaiting();
     expect(isWaiting).toBe(false);
 
     // Simulate the call to the processor
-    globalWorker.db = { loadDirectorySummaries: jest.fn().mockResolvedValue([]) };
+    globalWorker.dbClient = { loadDirectorySummaries: jest.fn().mockResolvedValue([]) };
     globalWorker.llmClient = { query: jest.fn().mockResolvedValue({ relationships: [] }) };
     globalWorker.graphBuildQueue = { add: jest.fn() };
 
     await processor(parentJob);
-    expect(globalWorker.db.loadDirectorySummaries).toHaveBeenCalled();
+    expect(globalWorker.dbClient.loadDirectorySummaries).toHaveBeenCalled();
   });
 });

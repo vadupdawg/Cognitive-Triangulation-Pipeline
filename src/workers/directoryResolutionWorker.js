@@ -1,6 +1,7 @@
 const { getDeepseekClient } = require('../utils/deepseekClient');
 const { DatabaseManager } = require('../utils/sqliteDb');
 const QueueManager = require('../utils/queueManager');
+const { Worker } = require('bullmq');
 
 /**
  * @class DirectoryResolutionWorker
@@ -14,15 +15,16 @@ class DirectoryResolutionWorker {
    * @constructor
    * @param {QueueManager} queueManager - An instance of QueueManager.
    * @param {LLMClient} llmClient - An instance of LLMClient for AI queries.
-   * @param {DatabaseClient} dbClient - An instance of DatabaseClient for DB operations.
+   * @param {DatabaseManager} dbClient - An instance of DatabaseManager for DB operations.
    */
   constructor(queueManager, llmClient, dbClient) {
     this.queueManager = queueManager || new QueueManager();
     this.llmClient = llmClient || getDeepseekClient();
     this.dbClient = dbClient || new DatabaseManager();
-    this.worker = this.queueManager.createWorker(
+    this.worker = new Worker(
       'directory-resolution-queue',
-      this.processJob.bind(this)
+      this.processJob.bind(this),
+      { connection: this.queueManager.connectionOptions }
     );
   }
 
@@ -39,11 +41,12 @@ class DirectoryResolutionWorker {
    * @param {string} job.data.directoryPath - The path of the directory to analyze.
    */
   async processJob(job) {
-    const { directoryPath } = job.data;
-    if (!directoryPath) {
-      console.error('DirectoryResolutionWorker Error: Job is missing directoryPath.', { jobId: job.id });
-      throw new Error('Job data must include directoryPath.');
-    }
+   console.log(`🚀 [DirectoryResolutionWorker] Processing job ${job.id} for directory: ${job.data.directoryPath}`);
+   const { directoryPath } = job.data;
+   if (!directoryPath) {
+     console.error(`❌ [DirectoryResolutionWorker] Job ${job.id} is missing directoryPath.`);
+     throw new Error('Job data must include directoryPath.');
+   }
 
     const BATCH_SIZE = 100;
     let offset = 0;

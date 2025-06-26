@@ -1,5 +1,6 @@
 const logger = require('../utils/logger');
 const { DatabaseManager } = require('../utils/sqliteDb');
+const { Worker } = require('bullmq');
 
 class GlobalResolutionWorker {
     /**
@@ -41,8 +42,10 @@ class GlobalResolutionWorker {
      * @param {import('bullmq').Job} job - The job to process.
      */
     async processJob(job) {
+        console.log(`🚀 [GlobalResolutionWorker] Processing job ${job.id} for runId: ${job.data.runId}`);
         const { runId } = job.data;
         if (!runId) {
+            console.error(`❌ [GlobalResolutionWorker] Job ${job.id} is missing runId.`);
             throw new Error('Job data must include a runId.');
         }
 

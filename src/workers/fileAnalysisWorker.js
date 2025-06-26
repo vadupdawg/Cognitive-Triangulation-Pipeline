@@ -16,8 +16,10 @@ class FileAnalysisWorker {
     }
 
     async processJob(job) {
+        console.log(`🚀 [FileAnalysisWorker] Processing job ${job.id} for file: ${job.data.filePath}`);
         const { filePath } = job.data;
         if (!filePath) {
+            console.error(`❌ [FileAnalysisWorker] Job ${job.id} is missing filePath.`);
             throw new Error("Job data is missing required 'filePath' property.");
         }
 

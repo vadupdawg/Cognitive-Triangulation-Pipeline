@@ -68,6 +68,17 @@ class DatabaseManager {
         const statement = db.prepare(sql);
         return statement.all(`${directoryPath}%`, limit, offset);
     }
+
+    loadDirectorySummaries(runId, limit, offset) {
+        const db = this.getDb();
+        const sql = `
+            SELECT * FROM directory_summaries
+            WHERE run_id = ?
+            LIMIT ? OFFSET ?;
+        `;
+        const statement = db.prepare(sql);
+        return statement.all(runId, limit, offset);
+    }
 }
 
 // Global database manager instance

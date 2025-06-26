@@ -1,7 +1,6 @@
-const { initializeDb, getDb } = require('./utils/sqliteDb');
-const { getNeo4jDriver } = require('./utils/neo4jDriver');
+const { DatabaseManager } = require('./utils/sqliteDb');
+const neo4jDriver = require('./utils/neo4jDriver');
 const QueueManager = require('./utils/queueManager');
-const queueManager = new QueueManager();
 const EntityScout = require('./agents/EntityScout');
 const FileAnalysisWorker = require('./workers/fileAnalysisWorker');
 const DirectoryResolutionWorker = require('./workers/directoryResolutionWorker');
@@ -10,10 +9,12 @@ const config = require('./config');
 const { v4: uuidv4 } = require('uuid');
 
 class CognitiveTriangulationPipeline {
-    constructor(targetDirectory) {
+    constructor(targetDirectory, dbPath = './database.db') {
         this.targetDirectory = targetDirectory;
+        this.dbPath = dbPath;
         this.runId = uuidv4();
-        this.queueManager = queueManager;
+        this.queueManager = new QueueManager();
+        this.dbManager = new DatabaseManager(this.dbPath);
         this.metrics = {
             startTime: null,
             endTime: null,
@@ -24,63 +25,68 @@ class CognitiveTriangulationPipeline {
     }
 
     async initialize() {
-        console.log('🚀 Initializing Job-Based Cognitive Triangulation Pipeline...');
-        await initializeDb();
+        console.log('🚀 [main.js] Initializing Job-Based Cognitive Triangulation Pipeline...');
+        this.dbManager.initializeDb();
+        console.log('🚀 [main.js] Database schema initialized.');
         await this.clearDatabases();
-        console.log('✅ Databases and clients initialized successfully');
+        console.log('✅ [main.js] Databases and clients initialized successfully');
     }
+async run() {
+    console.log('🚀 [main.js] Pipeline run started.');
+    this.metrics.startTime = new Date();
+    try {
+        await this.initialize();
 
-    async run() {
-        this.metrics.startTime = new Date();
-        try {
-            await this.initialize();
+        console.log('🏁 [main.js] Starting workers...');
+        this.startWorkers();
 
-            console.log('🏁 Starting workers...');
-            this.startWorkers();
+        console.log('🔍 [main.js] Starting EntityScout to produce jobs...');
+        const entityScout = new EntityScout(this.queueManager, this.targetDirectory, this.runId);
+        const { globalJob, totalJobs } = await entityScout.run();
+        this.metrics.totalJobs = totalJobs;
+        console.log(`✅ [main.js] EntityScout created ${totalJobs} jobs with global job ${globalJob.id}`);
 
-            console.log('🔍 Starting EntityScout to produce jobs...');
-            const entityScout = new EntityScout(this.queueManager, this.targetDirectory);
-            const { globalJob, totalJobs } = await entityScout.run();
-            this.metrics.totalJobs = totalJobs;
-            console.log(`✅ EntityScout created ${totalJobs} jobs with global job ${globalJob.id}`);
+        console.log('⏳ [main.js] Waiting for global job to complete...');
+        await globalJob.waitUntilFinished(this.queueManager.events);
+        console.log('🎉 [main.js] Global job completed!');
 
-            console.log('⏳ Waiting for global job to complete...');
-            await globalJob.waitUntilFinished(this.queueManager.events);
-            console.log('🎉 Global job completed!');
+        this.metrics.endTime = new Date();
+        await this.printFinalReport();
 
-            this.metrics.endTime = new Date();
-            await this.printFinalReport();
-
-        } catch (error) {
-            console.error('❌ Critical error in pipeline execution:', error);
-            this.metrics.failedJobs++;
-            throw error;
-        } finally {
-            await this.queueManager.closeConnections();
-            const neo4jDriver = getNeo4jDriver();
-            if (process.env.NODE_ENV !== 'test' && neo4jDriver) {
-                await neo4jDriver.close();
-            }
+    } catch (error) {
+        console.error('❌ [main.js] Critical error in pipeline execution:', error);
+        this.metrics.failedJobs++;
+        throw error;
+    } finally {
+        console.log('🚀 [main.js] Closing connections...');
+        await this.queueManager.closeConnections();
+        const driver = neo4jDriver;
+        if (process.env.NODE_ENV !== 'test' && driver) {
+            await driver.close();
         }
+        this.dbManager.close();
+        console.log('✅ [main.js] Connections closed.');
+    }
+}
     }
 
     startWorkers() {
-        new FileAnalysisWorker(this.queueManager.getQueue('file-analysis-queue'));
-        new DirectoryResolutionWorker(this.queueManager.getQueue('directory-resolution-queue'));
-        new GlobalResolutionWorker(this.queueManager.getQueue('global-resolution-queue'));
+        new FileAnalysisWorker(this.queueManager, null, this.dbManager);
+        new DirectoryResolutionWorker(this.queueManager, null, this.dbManager);
+        new GlobalResolutionWorker(this.queueManager, null, this.dbManager);
         console.log('✅ All workers are running and listening for jobs.');
     }
 
     async clearDatabases() {
-        const db = await getDb();
+        const db = this.dbManager.getDb();
         console.log('🗑️ Clearing SQLite database...');
         db.exec('DELETE FROM relationships');
         db.exec('DELETE FROM pois');
         db.exec('DELETE FROM files');
         
-        const neo4jDriver = getNeo4jDriver();
+        const driver = neo4jDriver;
         console.log('🗑️ Clearing Neo4j database...');
-        const session = neo4jDriver.session({ database: config.NEO4J_DATABASE });
+        const session = driver.session({ database: config.NEO4J_DATABASE });
         try {
             await session.run('MATCH (n) DETACH DELETE n');
             console.log('✅ Neo4j database cleared successfully');
@@ -109,11 +115,7 @@ async function main() {
     const targetDirectory = dirIndex !== -1 ? args[dirIndex + 1] : process.cwd();
 
     try {
-        const pipeline = new CognitiveTriangulationPipeline(targetDirectory, {
-            maxParallelAgents: 100,
-            enableSelfCleaning: true,
-            validateResults: true
-        });
+        const pipeline = new CognitiveTriangulationPipeline(targetDirectory);
         
         await pipeline.run();
         console.log('🎉 Cognitive triangulation pipeline completed successfully!');

@@ -1,8 +1,16 @@
 const { getDriver } = require('../test-utils');
 const { exec } = require('child_process');
 const util = require('util');
-const { getDriver } = require('../test-utils');
 const execPromise = util.promisify(exec);
+
+async function clearDatabase(session) {
+    try {
+        await session.run('MATCH (n) DETACH DELETE n');
+    } catch (error) {
+        console.error('Error clearing database:', error);
+        throw error;
+    }
+}
 
 describe('Acceptance Test A-04-- Advanced Code Discovery and Queryability', () => {
     let driver;
