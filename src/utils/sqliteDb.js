@@ -39,6 +39,54 @@ class DatabaseManager {
         const db = this.getDb();
         const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8');
         db.exec(schema);
+        this.applyMigrations();
+    }
+
+    /**
+     * Applies schema migrations to the database.
+     */
+    applyMigrations() {
+        const db = this.getDb();
+        const version = db.pragma('user_version', { simple: true });
+
+        if (version < 1) {
+            const migrateToV1 = db.transaction(() => {
+                const columns = db.pragma('table_info(relationships)');
+                const columnNames = columns.map(col => col.name);
+                
+                let migrationSql = '';
+
+                if (!columnNames.includes('status')) {
+                    migrationSql += 'ALTER TABLE relationships ADD COLUMN status TEXT;';
+                }
+
+                if (!columnNames.includes('confidenceScore')) {
+                    migrationSql += 'ALTER TABLE relationships ADD COLUMN confidenceScore REAL;';
+                }
+                
+                migrationSql += `
+                    CREATE TABLE IF NOT EXISTS relationship_evidence (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        relationshipId INTEGER NOT NULL,
+                        runId TEXT NOT NULL,
+                        evidencePayload TEXT NOT NULL,
+                        FOREIGN KEY (relationshipId) REFERENCES relationships (id) ON DELETE CASCADE
+                    );
+                `;
+
+                if(migrationSql.trim().length > 0) {
+                    db.exec(migrationSql);
+                }
+
+                db.pragma('user_version = 1');
+            });
+
+            try {
+                migrateToV1();
+            } catch (error) {
+                console.error('Migration to V1 failed:', error);
+            }
+        }
     }
 
     /**

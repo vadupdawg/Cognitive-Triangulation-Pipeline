@@ -1,13 +1,16 @@
 const { DatabaseManager } = require('./utils/sqliteDb');
 const neo4jDriver = require('./utils/neo4jDriver');
 const QueueManager = require('./utils/queueManager');
+const { getCacheClient, closeCacheClient } = require('./utils/cacheClient');
 const EntityScout = require('./agents/EntityScout');
 const FileAnalysisWorker = require('./workers/fileAnalysisWorker');
 const DirectoryResolutionWorker = require('./workers/directoryResolutionWorker');
-const GlobalResolutionWorker = require('./workers/globalResolutionWorker');
+const ValidationWorker = require('./workers/ValidationWorker');
+const ReconciliationWorker = require('./workers/ReconciliationWorker');
+const GraphBuilderWorker = require('./agents/GraphBuilder');
+const TransactionalOutboxPublisher = require('./services/TransactionalOutboxPublisher');
 const config = require('./config');
 const { v4: uuidv4 } = require('uuid');
-const { QueueEvents } = require('bullmq');
 
 class CognitiveTriangulationPipeline {
     constructor(targetDirectory, dbPath = './database.db') {
@@ -16,17 +19,17 @@ class CognitiveTriangulationPipeline {
         this.runId = uuidv4();
         this.queueManager = new QueueManager();
         this.dbManager = new DatabaseManager(this.dbPath);
+        this.cacheClient = getCacheClient();
+        this.outboxPublisher = new TransactionalOutboxPublisher(this.dbPath, this.queueManager);
         this.metrics = {
             startTime: null,
             endTime: null,
             totalJobs: 0,
-            completedJobs: 0,
-            failedJobs: 0,
         };
     }
 
     async initialize() {
-        console.log('🚀 [main.js] Initializing Job-Based Cognitive Triangulation Pipeline...');
+        console.log('🚀 [main.js] Initializing Cognitive Triangulation v2 Pipeline...');
         this.dbManager.initializeDb();
         console.log('🚀 [main.js] Database schema initialized.');
         await this.clearDatabases();
@@ -34,38 +37,48 @@ class CognitiveTriangulationPipeline {
     }
 
     async run() {
-        console.log('🚀 [main.js] Pipeline run started.');
+        console.log(`🚀 [main.js] Pipeline run started with ID: ${this.runId}`);
         this.metrics.startTime = new Date();
         try {
             await this.initialize();
 
-            console.log('🏁 [main.js] Starting workers...');
+            console.log('🏁 [main.js] Starting workers and services...');
             this.startWorkers();
+            this.outboxPublisher.start();
 
             console.log('🔍 [main.js] Starting EntityScout to produce jobs...');
-            const entityScout = new EntityScout(this.queueManager, this.targetDirectory, this.runId);
-            const { globalJob, totalJobs } = await entityScout.run();
+            const entityScout = new EntityScout(this.queueManager, this.cacheClient, this.targetDirectory, this.runId);
+            const { totalJobs } = await entityScout.run();
             this.metrics.totalJobs = totalJobs;
-            console.log(`✅ [main.js] EntityScout created ${totalJobs} jobs with global job ${globalJob.id}`);
+            console.log(`✅ [main.js] EntityScout created ${totalJobs} initial jobs.`);
 
-            console.log('⏳ [main.js] Waiting for global job to complete...');
-            await this.waitForCompletion(globalJob);
-            console.log('🎉 [main.js] All jobs completed!');
+            console.log('⏳ [main.js] Waiting for all jobs to complete...');
+            await this.waitForCompletion();
+            console.log('🎉 [main.js] All analysis and reconciliation jobs completed!');
+            
+            console.log('🏗️ [main.js] Starting final graph build...');
+            const graphBuilder = new GraphBuilderWorker(this.dbManager.getDb(), neo4jDriver);
+            await graphBuilder.run();
+            console.log('✅ [main.js] Graph build complete.');
 
             this.metrics.endTime = new Date();
             await this.printFinalReport();
 
         } catch (error) {
             console.error('❌ [main.js] Critical error in pipeline execution:', error);
-            this.metrics.failedJobs++;
             throw error;
+        } finally {
+            await this.close();
         }
     }
 
     startWorkers() {
-        new FileAnalysisWorker(this.queueManager, null, this.dbManager);
-        new DirectoryResolutionWorker(this.queueManager, null, this.dbManager);
-        new GlobalResolutionWorker(this.queueManager, null, this.dbManager);
+        // Note: In a real distributed system, these would run in separate processes.
+        // For this simulation, we run them in the same process.
+        new FileAnalysisWorker(this.queueManager, null, this.dbManager); // llmResponseSanitizer is TBD
+        new DirectoryResolutionWorker(this.queueManager, null, this.dbManager); // llmClient is TBD
+        new ValidationWorker(this.queueManager, this.dbManager, this.cacheClient);
+        new ReconciliationWorker(this.queueManager, this.dbManager);
         console.log('✅ All workers are running and listening for jobs.');
     }
 
@@ -73,9 +86,13 @@ class CognitiveTriangulationPipeline {
         const db = this.dbManager.getDb();
         console.log('🗑️ Clearing SQLite database...');
         db.exec('DELETE FROM relationships');
+        db.exec('DELETE FROM relationship_evidence');
         db.exec('DELETE FROM pois');
         db.exec('DELETE FROM files');
         db.exec('DELETE FROM directory_summaries');
+
+        console.log('🗑️ Clearing Redis database...');
+        await this.cacheClient.flushdb();
 
         const driver = neo4jDriver;
         console.log('🗑️ Clearing Neo4j database...');
@@ -95,36 +112,50 @@ class CognitiveTriangulationPipeline {
         const duration = this.metrics.endTime - this.metrics.startTime;
         const durationSeconds = Math.round(duration / 1000);
         
-        console.log(`\n🎯 ====== JOB-BASED PIPELINE REPORT ======`);
+        console.log(`\n🎯 ====== Cognitive Triangulation v2 Report ======`);
+        console.log(`Run ID: ${this.runId}`);
         console.log(`⏱️  Total Duration: ${durationSeconds} seconds`);
-        console.log(`📈 Total Jobs Created: ${this.metrics.totalJobs}`);
-        console.log(`=========================================\n`);
+        console.log(`📈 Total Initial Jobs: ${this.metrics.totalJobs}`);
+        console.log(`==============================================\n`);
     }
-    async waitForCompletion(globalJob) {
-        if (!globalJob) {
-            console.log('No global job to wait for. Skipping wait.');
-            return;
-        }
 
-        const queueName = globalJob.queueName;
-        const queueEvents = new QueueEvents(queueName, { connection: this.queueManager.connectionOptions });
+    async waitForCompletion() {
+        return new Promise((resolve, reject) => {
+            const checkInterval = 5000; // Check every 5 seconds
+            let idleChecks = 0;
+            const requiredIdleChecks = 3; // Require 3 consecutive idle checks to be sure
 
-        try {
-            await globalJob.waitUntilFinished(queueEvents);
-            console.log(`Global job ${globalJob.id} completed successfully.`);
-        } catch (error) {
-            console.error(`Error waiting for global job ${globalJob.id} to complete.`, error);
-            throw error; // Re-throw the error to be caught by the run method's catch block
-        } finally {
-            await queueEvents.close();
-        }
+            const intervalId = setInterval(async () => {
+                try {
+                    const counts = await this.queueManager.getJobCounts();
+                    const totalActive = counts.active + counts.waiting + counts.delayed;
+                    
+                    console.log(`[Queue Monitor] Active: ${counts.active}, Waiting: ${counts.waiting}, Completed: ${counts.completed}, Failed: ${counts.failed}`);
+
+                    if (totalActive === 0) {
+                        idleChecks++;
+                        console.log(`[Queue Monitor] Queues appear idle. Check ${idleChecks}/${requiredIdleChecks}.`);
+                        if (idleChecks >= requiredIdleChecks) {
+                            clearInterval(intervalId);
+                            resolve();
+                        }
+                    } else {
+                        idleChecks = 0; // Reset if we see activity
+                    }
+                } catch (error) {
+                    clearInterval(intervalId);
+                    reject(error);
+                }
+            }, checkInterval);
+        });
     }
 
     async close() {
         console.log('🚀 [main.js] Closing connections...');
+        this.outboxPublisher.stop();
         await this.queueManager.closeConnections();
+        await closeCacheClient();
         const driver = neo4jDriver;
-        // In test environments, the driver is managed by the test suite.
         if (process.env.NODE_ENV !== 'test' && driver) {
             await driver.close();
         }
@@ -137,15 +168,18 @@ async function main() {
     const args = process.argv.slice(2);
     const dirIndex = args.indexOf('--dir');
     const targetDirectory = dirIndex !== -1 ? args[dirIndex + 1] : process.cwd();
+    let pipeline;
 
     try {
-        const pipeline = new CognitiveTriangulationPipeline(targetDirectory);
-        
+        pipeline = new CognitiveTriangulationPipeline(targetDirectory);
         await pipeline.run();
         console.log('🎉 Cognitive triangulation pipeline completed successfully!');
-        
+        process.exit(0);
     } catch (error) {
         console.error('💥 Fatal error in pipeline:', error);
+        if (pipeline) {
+            await pipeline.close();
+        }
         process.exit(1);
     }
 }

@@ -3,6 +3,7 @@ module.exports = {
     testMatch: [
         '**/tests/granular/**/*.test.js',
         '**/tests/acceptance/**/*.test.js',
+        '**/tests/acceptance/**/*.spec.js',
         '**/tests/unit/**/*.test.js',
         '**/tests/integration/**/*.test.js',
         '**/tests/functional/**/*.test.js',
