@@ -14,8 +14,7 @@ const path = require('path');
 
 // Test configuration
 const POLYGLOT_TESTS = [
-    'tests/integration/polyglot-validation.test.js',
-    'tests/integration/polyglot-database-queries.test.js'
+    'tests/acceptance/A-01_comprehensive_graph_generation.test.js'
 ];
 
 const JEST_CONFIG = {

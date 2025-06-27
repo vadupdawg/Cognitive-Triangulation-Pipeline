@@ -23,8 +23,10 @@ class ConfidenceScoringService {
   }
 
   /**
-   * Calculates a final, reconciled confidence score from an array of evidence.
+   * Calculates a final, reconciled confidence score from an array of evidence
+   * using a single-pass reduce operation for improved efficiency and robustness.
    * @param {Array<object>} evidenceArray - Array of evidence objects from workers.
+   *        Each object must have `initialScore` (number) and `foundRelationship` (boolean).
    * @returns {{finalScore: number, hasConflict: boolean}}
    */
   static calculateFinalScore(evidenceArray) {
@@ -32,30 +34,46 @@ class ConfidenceScoringService {
       return { finalScore: 0, hasConflict: false };
     }
 
-    let finalScore = evidenceArray[0].initialScore;
-    const agreements = evidenceArray.filter(e => e.foundRelationship).length;
-    const disagreements = evidenceArray.filter(e => !e.foundRelationship).length;
-
-    const hasConflict = agreements > 0 && disagreements > 0;
-
-    // Start from the second piece of evidence to apply boosts/penalties
-    for (let i = 1; i < evidenceArray.length; i++) {
-      const evidence = evidenceArray[i];
-      if (evidence.foundRelationship) {
-        // Apply agreement boost: score + (1 - score) * 0.2
-        finalScore = finalScore + (1 - finalScore) * 0.2;
-      } else {
-        // Apply disagreement penalty: score * 0.5
-        finalScore = finalScore * 0.5;
-      }
+    // Validate the first element separately to establish a baseline.
+    const firstEvidence = evidenceArray[0];
+    if (
+      !firstEvidence ||
+      typeof firstEvidence.initialScore !== 'number' ||
+      typeof firstEvidence.foundRelationship !== 'boolean'
+    ) {
+        logger.warn({
+            msg: 'Invalid first evidence object. Returning default score.',
+            evidence: firstEvidence,
+        });
+        return { finalScore: 0, hasConflict: false };
     }
 
-    // Clamp the score to be within [0, 1]
-    const clampedScore = Math.max(0, Math.min(1, finalScore));
+    const initialState = {
+      score: firstEvidence.initialScore,
+      agreements: firstEvidence.foundRelationship ? 1 : 0,
+      disagreements: !firstEvidence.foundRelationship ? 1 : 0,
+    };
+
+    const result = evidenceArray.slice(1).reduce((acc, evidence) => {
+      // Robustness: Skip malformed evidence objects.
+      if (!evidence || typeof evidence.foundRelationship !== 'boolean') {
+        logger.warn({ msg: 'Skipping malformed evidence object.', evidence });
+        return acc;
+      }
+      
+      if (evidence.foundRelationship) {
+        acc.score += (1 - acc.score) * 0.2; // Agreement boost
+        acc.agreements += 1;
+      } else {
+        acc.score *= 0.5; // Disagreement penalty
+        acc.disagreements += 1;
+      }
+      return acc;
+    }, initialState);
 
     return {
-      finalScore: clampedScore,
-      hasConflict: hasConflict,
+      finalScore: Math.max(0, Math.min(1, result.score)),
+      hasConflict: result.agreements > 0 && result.disagreements > 0,
     };
   }
 }

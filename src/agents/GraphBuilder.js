@@ -39,10 +39,10 @@ class GraphBuilder {
 
         for (const row of stmt.iterate()) {
             currentBatch.push({
-                sourcePoiId: row.sourcePoiId,
-                targetPoiId: row.targetPoiId,
+                source_poi_id: row.source_poi_id,
+                target_poi_id: row.target_poi_id,
                 type: row.type,
-                confidence: row.confidenceScore,
+                confidence: row.confidence_score,
             });
 
             if (currentBatch.length >= this.config.batchSize) {
@@ -69,16 +69,17 @@ class GraphBuilder {
         try {
             const cypher = `
                 UNWIND $batch as rel
-                MERGE (source:POI {id: rel.sourcePoiId})
-                MERGE (target:POI {id: rel.targetPoiId})
+                MERGE (source:POI {id: rel.source_poi_id})
+                MERGE (target:POI {id: rel.target_poi_id})
                 CALL apoc.create.relationship(source, rel.type, {confidence: rel.confidence}, target) YIELD rel as createdRel
                 RETURN count(createdRel) as created
             `;
             
             const fallbackCypher = `
                 UNWIND $batch as rel
-                MERGE (source:POI {id: rel.sourcePoiId})
-                MERGE (target:POI {id: rel.targetPoiId})
+                MERGE (source:POI {id: rel.source_poi_id})
+                MERGE (target:POI {id: rel.target_poi_id})
+                WITH source, target, rel
                 CALL apoc.cypher.doIt(
                     'MERGE (source)-[r:' + rel.type + ']->(target) SET r.confidence = $confidence',
                     {source: source, target: target, confidence: rel.confidence}

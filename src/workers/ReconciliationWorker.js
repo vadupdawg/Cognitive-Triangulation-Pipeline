@@ -1,11 +1,10 @@
 const { Worker } = require('bullmq');
-const { ConfidenceScoringService } = require('../services/cognitive_triangulation/ConfidenceScoringService');
+const ConfidenceScoringService = require('../services/cognitive_triangulation/ConfidenceScoringService');
 
 class ReconciliationWorker {
     constructor(queueManager, dbManager) {
         this.queueManager = queueManager;
         this.dbManager = dbManager;
-        this.confidenceScoringService = new ConfidenceScoringService();
         this.worker = new Worker('reconciliation-queue', this.process.bind(this), {
             connection: this.queueManager.connectionOptions,
             concurrency: 5
@@ -25,10 +24,10 @@ class ReconciliationWorker {
         const evidence = evidenceRows.map(row => JSON.parse(row.evidence_payload));
 
         // 2. Calculate confidence score
-        const { score, explanation } = this.confidenceScoringService.calculateFinalScore(evidence);
+        const { finalScore, hasConflict } = ConfidenceScoringService.calculateFinalScore(evidence);
 
         // 3. Write final relationship
-        if (score > 0.5) { // Confidence threshold
+        if (finalScore > 0.5) { // Confidence threshold
             const finalRelationship = evidence[0]; // Assuming the base relationship data is in the first evidence
             db.prepare(
                 `INSERT INTO relationships (id, sourcePoiId, targetPoiId, type, filePath, status, confidenceScore)
@@ -40,11 +39,11 @@ class ReconciliationWorker {
                 finalRelationship.type,
                 finalRelationship.filePath,
                 'VALIDATED',
-                score
+                finalScore
             );
-            console.log(`[ReconciliationWorker] Validated relationship ${relationshipHash} with score ${score}`);
+            console.log(`[ReconciliationWorker] Validated relationship ${relationshipHash} with score ${finalScore}`);
         } else {
-            console.log(`[ReconciliationWorker] Discarded relationship ${relationshipHash} with score ${score}`);
+            console.log(`[ReconciliationWorker] Discarded relationship ${relationshipHash} with score ${finalScore}`);
         }
     }
 }

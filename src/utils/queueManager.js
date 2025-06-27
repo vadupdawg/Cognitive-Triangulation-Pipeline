@@ -80,13 +80,34 @@ class QueueManager {
     });
 
     this.workers.push(worker);
+    this.workers.push(worker);
     return worker;
+  }
+
+  async getJobCounts() {
+    const allCounts = {
+      active: 0,
+      waiting: 0,
+      completed: 0,
+      failed: 0,
+      delayed: 0,
+    };
+
+    for (const queue of this.activeQueues.values()) {
+      const counts = await queue.getJobCounts();
+      allCounts.active += counts.active || 0;
+      allCounts.waiting += counts.waiting || 0;
+      allCounts.completed += counts.completed || 0;
+      allCounts.failed += counts.failed || 0;
+      allCounts.delayed += counts.delayed || 0;
+    }
+
+    return allCounts;
   }
 
   async closeConnections() {
     console.log('Attempting to close all active connections...');
     const closePromises = [];
-
     for (const queue of this.activeQueues.values()) {
       console.log(`Closing queue: ${queue.name}`);
       closePromises.push(queue.close());

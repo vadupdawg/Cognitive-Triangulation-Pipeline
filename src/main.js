@@ -5,12 +5,14 @@ const { getCacheClient, closeCacheClient } = require('./utils/cacheClient');
 const EntityScout = require('./agents/EntityScout');
 const FileAnalysisWorker = require('./workers/fileAnalysisWorker');
 const DirectoryResolutionWorker = require('./workers/directoryResolutionWorker');
+const RelationshipResolutionWorker = require('./workers/relationshipResolutionWorker');
 const ValidationWorker = require('./workers/ValidationWorker');
 const ReconciliationWorker = require('./workers/ReconciliationWorker');
 const GraphBuilderWorker = require('./agents/GraphBuilder');
 const TransactionalOutboxPublisher = require('./services/TransactionalOutboxPublisher');
 const config = require('./config');
 const { v4: uuidv4 } = require('uuid');
+const { getDeepseekClient } = require('./utils/deepseekClient');
 
 class CognitiveTriangulationPipeline {
     constructor(targetDirectory, dbPath = './database.db') {
@@ -20,7 +22,8 @@ class CognitiveTriangulationPipeline {
         this.queueManager = new QueueManager();
         this.dbManager = new DatabaseManager(this.dbPath);
         this.cacheClient = getCacheClient();
-        this.outboxPublisher = new TransactionalOutboxPublisher(this.dbPath, this.queueManager);
+        this.llmClient = getDeepseekClient();
+        this.outboxPublisher = new TransactionalOutboxPublisher(this.dbManager, this.queueManager);
         this.metrics = {
             startTime: null,
             endTime: null,
@@ -75,8 +78,9 @@ class CognitiveTriangulationPipeline {
     startWorkers() {
         // Note: In a real distributed system, these would run in separate processes.
         // For this simulation, we run them in the same process.
-        new FileAnalysisWorker(this.queueManager, null, this.dbManager); // llmResponseSanitizer is TBD
-        new DirectoryResolutionWorker(this.queueManager, null, this.dbManager); // llmClient is TBD
+        new FileAnalysisWorker(this.queueManager, this.dbManager, this.cacheClient, this.llmClient);
+        new DirectoryResolutionWorker(this.queueManager, this.dbManager, this.cacheClient, this.llmClient);
+        new RelationshipResolutionWorker(this.queueManager, this.dbManager, this.llmClient);
         new ValidationWorker(this.queueManager, this.dbManager, this.cacheClient);
         new ReconciliationWorker(this.queueManager, this.dbManager);
         console.log('✅ All workers are running and listening for jobs.');

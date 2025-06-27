@@ -36,10 +36,10 @@ describe('Acceptance Test A-01-- Comprehensive Graph Generation', () => {
         const { stdout, stderr } = await execPromise('node src/main.js --dir polyglot-test');
         
         console.log('Pipeline STDOUT--', stdout);
-        if (stderr) {
+        if (stderr && !stderr.includes('It is highly recommended to use a minimum Redis version')) {
             console.error('Pipeline STDERR--', stderr);
         }
-        expect(stderr).toBe('');
+        expect(stderr.replace(/It is highly recommended to use a minimum Redis version of 6.2.0\s+Current: 6.0.16\s+/g, '')).toBe('');
 
         // --- Verification Step 1-- Verify Node Counts ---
         // This query checks if the correct number and types of nodes (POIs) were created.

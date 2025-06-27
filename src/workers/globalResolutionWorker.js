@@ -105,6 +105,13 @@ class GlobalResolutionWorker {
             Focus only on connections BETWEEN different directories. Do not report relationships within the same directory.
             Format the output as a JSON object with a single key "relationships", which is an array of objects. Each object should have "from", "to", and "type" keys.
             'from' and 'to' should be the directory paths.
+
+            Example of a good relationship:
+            {
+              "from": "/src/services",
+              "to": "/src/utils",
+              "type": "USES_UTILITIES"
+            }
             
             ${summaryBlocks}
         `;
