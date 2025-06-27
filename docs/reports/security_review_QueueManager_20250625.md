@@ -23,7 +23,7 @@ The most critical finding is the lack of authentication on the Redis connection,
 ### VULN-001: Insecure Redis Configuration (Critical)
 
 **Description:**
-The Redis connection, managed by `ioredis` in [`src/utils/queueManager.js`](src/utils/queueManager.js:17), does not enforce password authentication. The configuration in [`config.js`](config.js:30) defaults to `redis://localhost:6379` and does not provide a mechanism to set a password. If the Redis server is accessible from an untrusted network, this vulnerability allows any user to connect without credentials, granting them full control over the message queues. This could lead to data theft, manipulation, or denial of service.
+The Redis connection, managed by `ioredis` in [`src/utils/queueManager.js`](src/utils/queueManager.js:17), does not enforce password authentication. The configuration in [`config.js`](config.js:30) defaults to `redis://localhost:6379` and does not provide a mechanism to set a password. If the Redis server is accessible from an untrusted network, this vulnerability allows any user to connect without credentials, granting them full control over the message queues. This could lead to data theft, ma [truncated...]
 
 **Location:**
 - [`src/utils/queueManager.js:17`](src/utils/queueManager.js:17)

@@ -4,23 +4,59 @@ const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const QueueManager = require('../../../src/utils/queueManager');
 const FileAnalysisWorker = require('../../../src/workers/fileAnalysisWorker');
-const { FILE_ANALYSIS_QUEUE_NAME, FILE_ANALYSIS_COMPLETED_QUEUE_NAME } = require('../../../src/config');
+
+jest.mock('../../../src/utils/logger');
+jest.mock('../../../src/utils/LLMResponseSanitizer', () => ({
+    sanitize: jest.fn(response => response),
+}));
 
 describe('FileAnalysisWorker Functional Tests', () => {
-    let testRootDir;
     let queueManager;
     let fileAnalysisWorker;
+    let mockLlmClient;
+    let mockDbManager;
+    let mockDb;
+    let runId;
+    let testRootDir;
+    let directoryAggregationQueue;
 
     beforeAll(async () => {
         queueManager = new QueueManager();
+        // We need a real queue to spy on, but the worker will use a mock
+        directoryAggregationQueue = queueManager.getQueue('directory-aggregation-queue');
+        await directoryAggregationQueue.obliterate({ force: true });
     });
 
     beforeEach(async () => {
+        runId = uuidv4();
         const uniqueId = uuidv4();
         testRootDir = path.join(os.tmpdir(), `test-run-${uniqueId}`);
         await fs.ensureDir(testRootDir);
-        await queueManager.clearAllQueues();
-        fileAnalysisWorker = new FileAnalysisWorker();
+
+        // Mock dependencies
+        mockLlmClient = {
+            query: jest.fn().mockResolvedValue(JSON.stringify({ pois: [{ name: 'myFunc', type: 'FunctionDefinition' }] }))
+        };
+        
+        const mockStatement = { run: jest.fn() };
+        mockDb = { prepare: jest.fn(() => mockStatement) };
+        mockDbManager = { getDb: jest.fn(() => mockDb) };
+
+        // Mock the queue manager for the worker to control queue interactions
+        const mockQueueManager = {
+            getQueue: jest.fn((queueName) => {
+                if (queueName === 'directory-aggregation-queue') {
+                    // Return a mock queue object that we can spy on
+                    return {
+                        add: jest.fn().mockResolvedValue(true),
+                    };
+                }
+                return null;
+            }),
+            connectionOptions: queueManager.connectionOptions, // Use real connection options
+        };
+
+        fileAnalysisWorker = new FileAnalysisWorker(mockQueueManager, mockDbManager, null, mockLlmClient, { processOnly: true });
     });
 
     afterEach(async () => {
@@ -32,78 +68,52 @@ describe('FileAnalysisWorker Functional Tests', () => {
         await queueManager.closeConnections();
     });
 
-    // Test Case FAW-01
-    test('FAW-01: Should correctly consume a job and publish a completion event', async () => {
-        const testFilePath = path.join(testRootDir, 'testfile.txt');
-        await fs.writeFile(testFilePath, 'Some content to analyze.');
+    test('FAW-01: Should process a file analysis job and trigger directory aggregation', async () => {
+        const testFilePath = path.join(testRootDir, 'testfile.js');
+        await fs.writeFile(testFilePath, 'function myFunc() {}');
+        const jobId = uuidv4();
 
-        const fileAnalysisQueue = queueManager.getQueue(FILE_ANALYSIS_QUEUE_NAME);
-        const job = await fileAnalysisQueue.add('analyze-file', {
-            filePath: testFilePath,
-            directoryPath: testRootDir,
-            totalFilesInDir: 1
-        });
+        const job = {
+            id: jobId,
+            data: {
+                filePath: testFilePath,
+                runId: runId,
+                jobId: jobId
+            }
+        };
 
-        await fileAnalysisWorker.processJob(job);
+        await fileAnalysisWorker.process(job);
 
-        const completedQueue = queueManager.getQueue(FILE_ANALYSIS_COMPLETED_QUEUE_NAME);
-        const completedJobs = await completedQueue.getJobs(['waiting', 'completed']);
+        // Verification
+        expect(mockLlmClient.query).toHaveBeenCalledTimes(1);
+        expect(mockDbManager.getDb).toHaveBeenCalledTimes(1);
+        expect(mockDb.prepare).toHaveBeenCalledWith('INSERT INTO outbox (event_type, payload, status) VALUES (?, ?, ?)');
         
-        expect(completedJobs).toHaveLength(1);
-        const completedJobData = completedJobs[0].data;
-        expect(completedJobData).toHaveProperty('points_of_interest');
-        expect(completedJobData).toHaveProperty('relationships');
-        expect(completedJobData).toHaveProperty('confidence_score');
-        expect(completedJobData.filePath).toBe(testFilePath);
-
-        const originalJob = await fileAnalysisQueue.getJob(job.id);
-        expect(originalJob.isCompleted()).toBeTruthy();
+        const aggregationQueue = fileAnalysisWorker.directoryAggregationQueue;
+        expect(aggregationQueue.add).toHaveBeenCalledTimes(1);
+        expect(aggregationQueue.add).toHaveBeenCalledWith('aggregate-directory', {
+            directoryPath: testRootDir,
+            runId: runId,
+            fileJobId: jobId,
+        });
     });
 
-    // Test Case FAW-02
-    test('FAW-02: Should handle file not found errors gracefully', async () => {
-        const nonExistentFilePath = path.join(testRootDir, 'not-found.txt');
-        const fileAnalysisQueue = queueManager.getQueue(FILE_ANALYSIS_QUEUE_NAME);
-        const job = await fileAnalysisQueue.add('analyze-file', { filePath: nonExistentFilePath });
+    test('FAW-02: Should fail gracefully if file does not exist', async () => {
+        const nonExistentFilePath = path.join(testRootDir, 'not-found.js');
+        const job = {
+            id: uuidv4(),
+            data: { filePath: nonExistentFilePath, runId }
+        };
 
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-        await fileAnalysisWorker.processJob(job);
-
-        const completedQueue = queueManager.getQueue(FILE_ANALYSIS_COMPLETED_QUEUE_NAME);
-        const completedJobs = await completedQueue.getJobs(['waiting', 'completed']);
-        
-        expect(completedJobs).toHaveLength(0);
-        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Error processing job'), expect.anything());
-        
-        const originalJob = await fileAnalysisQueue.getJob(job.id);
-        expect(originalJob.isFailed()).toBeTruthy();
-
-        consoleErrorSpy.mockRestore();
+        await expect(fileAnalysisWorker.process(job)).rejects.toThrow('ENOENT: no such file or directory');
     });
 
-    // Test Case FAW-03
-    test('FAW-03: Should handle malformed job data', async () => {
-        const fileAnalysisQueue = queueManager.getQueue(FILE_ANALYSIS_QUEUE_NAME);
-        const job = await fileAnalysisQueue.add('analyze-file', {
-            // Missing filePath
-            directoryPath: testRootDir,
-            totalFilesInDir: 1
-        });
+    test('FAW-03: Should fail gracefully for malformed job data (missing filePath)', async () => {
+        const job = {
+            id: uuidv4(),
+            data: { runId } // Missing filePath
+        };
 
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-        await fileAnalysisWorker.processJob(job);
-
-        const completedQueue = queueManager.getQueue(FILE_ANALYSIS_COMPLETED_QUEUE_NAME);
-        const completedJobs = await completedQueue.getJobs(['waiting', 'completed']);
-        
-        expect(completedJobs).toHaveLength(0);
-        expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid job data'), expect.anything());
-
-        const originalJob = await fileAnalysisQueue.getJob(job.id);
-        expect(originalJob.isFailed()).toBeTruthy();
-
-        consoleErrorSpy.mockRestore();
+        await expect(fileAnalysisWorker.process(job)).rejects.toThrow("Cannot destructure property 'filePath' of 'job.data' as it is undefined.");
     });
 });

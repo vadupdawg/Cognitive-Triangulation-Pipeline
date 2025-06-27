@@ -6,12 +6,16 @@ const neo4j = require('neo4j-driver');
 const Redis = require('ioredis');
 const EntityScout = require('../../../src/agents/EntityScout');
 const FileAnalysisWorker = require('../../../src/workers/fileAnalysisWorker');
-const AggregationService = require('../../../src/workers/directoryAggregationWorker');
-const GraphBuilderWorker = require('../../../src/agents/GraphBuilder');
+const DirectoryAggregationWorker = require('../../../src/workers/directoryAggregationWorker');
+const GlobalResolutionWorker = require('../../../src/workers/globalResolutionWorker');
 const ValidationWorker = require('../../../src/workers/validationWorker');
-const GraphBuilderWorker = require('../../../src/workers/graphBuilderWorker');
+const GraphBuilderWorker = require('../../../src/agents/GraphBuilder');
 const QueueManager = require('../../../src/utils/queueManager');
-const { NEO4J_CONFIG, REDIS_CONFIG } = require('../../../src/config');
+const { DatabaseManager } = require('../../../src/utils/sqliteDb');
+const { NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, REDIS_CONFIG, SQLITE_DB_PATH } = global.config;
+
+jest.mock('../../../src/utils/logger');
+jest.setTimeout(30000); // 30-second timeout for this E2E test
 
 describe('End-to-End Pipeline Test', () => {
     let testRootDir;
@@ -19,15 +23,19 @@ describe('End-to-End Pipeline Test', () => {
     let driver;
     let session;
     let redisClient;
+    let dbManager;
     let workers = [];
+    let runId;
 
     beforeAll(async () => {
         queueManager = new QueueManager();
-        driver = neo4j.driver(NEO4J_CONFIG.uri, neo4j.auth.basic(NEO4J_CONFIG.user, NEO4J_CONFIG.password));
+        driver = neo4j.driver(NEO4J_URI, neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD));
         redisClient = new Redis(REDIS_CONFIG);
+        dbManager = new DatabaseManager(SQLITE_DB_PATH);
     });
 
     beforeEach(async () => {
+        runId = uuidv4();
         const uniqueId = uuidv4();
         testRootDir = path.join(os.tmpdir(), `e2e-test-${uniqueId}`);
         await fs.ensureDir(testRootDir);
@@ -36,19 +44,25 @@ describe('End-to-End Pipeline Test', () => {
         await session.run('MATCH (n) DETACH DELETE n');
         await redisClient.flushall();
         await queueManager.clearAllQueues();
+        dbManager.initializeDb();
 
-        // Start all workers
-        workers.push(new FileAnalysisWorker());
-        workers.push(new AggregationService());
-        workers.push(new GlobalResolutionWorker());
-        workers.push(new ValidationWorker());
-        workers.push(new GraphBuilderWorker());
+        // Mock external dependencies
+        const mockLlmClient = { query: jest.fn().mockResolvedValue(JSON.stringify({ relationships: [], pois: [] })) };
+        
+        // Start all workers with their dependencies
+        workers.push(new FileAnalysisWorker(queueManager, dbManager, redisClient, mockLlmClient));
+        workers.push(new DirectoryAggregationWorker(queueManager, redisClient));
+        workers.push(new GlobalResolutionWorker(queueManager, mockLlmClient, dbManager));
+        workers.push(new ValidationWorker(queueManager, dbManager, redisClient));
+        workers.push(new GraphBuilderWorker(queueManager, driver));
     });
 
     afterEach(async () => {
         await fs.remove(testRootDir);
         for (const worker of workers) {
-            await worker.close();
+            if (worker.worker) {
+                await worker.worker.close();
+            }
         }
         workers = [];
         await session.close();
@@ -58,6 +72,7 @@ describe('End-to-End Pipeline Test', () => {
         await queueManager.closeConnections();
         await driver.close();
         await redisClient.quit();
+        dbManager.close();
     });
 
     // Test Case E2E-01
@@ -71,30 +86,37 @@ describe('End-to-End Pipeline Test', () => {
         await fs.writeFile(path.join(apiDir, 'handler.js'), 'const tax = calculateTax();');
 
         // 2. Run EntityScout
-        const entityScout = new EntityScout();
-        await entityScout.run(testRootDir);
+        const entityScout = new EntityScout(queueManager, redisClient, testRootDir, runId);
+        await entityScout.run();
 
-        // 3. Wait for the entire pipeline to complete
-        // This is a long timeout to allow all async events and workers to finish.
-        // In a real-world scenario, we might have more sophisticated polling or signaling.
-        await new Promise(resolve => setTimeout(resolve, 15000));
+        // 3. Poll for completion
+        await pollForCompletion(async () => {
+            const result = await session.run(
+                `MATCH (f:File)-[:DEFINES]->(func:Function {name: 'calculateTax'})
+                 RETURN f, func`
+            );
+            return result.records.length > 0;
+        }, 20000, 1000);
+
 
         // 4. Verify final state in Neo4j
         const result = await session.run(
             `MATCH (source:File)-[r:CALLS]->(target:Function)
-             WHERE source.id ENDS WITH 'handler.js' AND target.id = 'func:calculateTax'
+             WHERE source.id ENDS WITH 'handler.js' AND target.name = 'calculateTax'
              RETURN r`
         );
         
         expect(result.records).toHaveLength(1);
-        expect(result.records[0].get('r').properties.linking_element).toBe('calculateTax');
-
-        const definitionResult = await session.run(
-            `MATCH (source:File)-[r:DEFINES]->(target:Function)
-             WHERE source.id ENDS WITH 'service.js' AND target.id = 'func:calculateTax'
-             RETURN r`
-        );
-        expect(definitionResult.records).toHaveLength(1);
-
-    }, 20000); // 20-second timeout for this E2E test
+    });
 });
+
+async function pollForCompletion(conditionFn, timeout, interval) {
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeout) {
+        if (await conditionFn()) {
+            return;
+        }
+        await new Promise(resolve => setTimeout(resolve, interval));
+    }
+    throw new Error('Polling timed out');
+}

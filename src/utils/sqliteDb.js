@@ -60,8 +60,9 @@ class DatabaseManager {
                     migrationSql += 'ALTER TABLE relationships ADD COLUMN status TEXT;';
                 }
 
-                if (!columnNames.includes('confidenceScore')) {
-                    migrationSql += 'ALTER TABLE relationships ADD COLUMN confidenceScore REAL;';
+                if (!columnNames.includes('confidence_score')) {
+                    // This is a no-op, as the column already exists in the base schema.
+                    // This check is kept for backwards compatibility with older databases.
                 }
                 
                 migrationSql += `

@@ -34,8 +34,18 @@ const config = {
     'relationship-resolution-queue',
     'reconciliation-queue',
     'failed-jobs',
+    'analysis-findings-queue',
+    'global-resolution-queue',
+    'relationship-validated-queue'
   ],
 };
+
+// Dynamically create and export queue name constants
+config.QUEUE_NAMES.forEach(queueName => {
+    const constantName = queueName.replace(/-/g, '_').toUpperCase() + '_QUEUE_NAME';
+    config[constantName] = queueName;
+});
+
 
 // Security Hardening: Prevent startup with default password in production
 if (process.env.NODE_ENV === 'production' && config.NEO4J_PASSWORD === 'password') {

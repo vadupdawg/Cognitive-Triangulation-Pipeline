@@ -2,6 +2,9 @@ const neo4j = require('neo4j-driver');
 require('dotenv').config();
 
 async function testConnection() {
+    // Add a delay to give the server time to start
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
     console.log('Environment variables:');
     console.log('NEO4J_URI:', process.env.NEO4J_URI);
     console.log('NEO4J_USER:', process.env.NEO4J_USER);

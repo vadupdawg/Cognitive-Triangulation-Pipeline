@@ -2,9 +2,10 @@ const neo4j = require('neo4j-driver');
 const config = require('../config');
 
 class GraphBuilder {
-    constructor(db, neo4jDriver) {
+    constructor(db, neo4jDriver, dbName) {
         this.db = db;
         this.neo4jDriver = neo4jDriver;
+        this.dbName = dbName;
         this.config = {
             batchSize: 500,
             maxConcurrentBatches: 2,
@@ -31,72 +32,88 @@ class GraphBuilder {
     }
 
     async _persistValidatedRelationships() {
-        const query = "SELECT * FROM relationships WHERE status = 'VALIDATED'";
-        const stmt = this.db.prepare(query);
+        const relationshipQuery = "SELECT * FROM relationships WHERE status = 'VALIDATED'";
+        const poiQuery = "SELECT id, file_path, name, type, start_line, end_line, hash FROM pois WHERE id = ?";
 
-        const batches = [];
+        const relIterator = this.db.prepare(relationshipQuery).iterate();
+        const poiStmt = this.db.prepare(poiQuery);
+
         let currentBatch = [];
+        const activePromises = new Set();
+        let processedCount = 0;
 
-        for (const row of stmt.iterate()) {
-            currentBatch.push({
-                source_poi_id: row.source_poi_id,
-                target_poi_id: row.target_poi_id,
-                type: row.type,
-                confidence: row.confidence_score,
-            });
+        const generateSemanticId = (poi) => {
+            if (poi.type === 'file') return poi.file_path;
+            return `${poi.type}:${poi.name}@${poi.file_path}:${poi.start_line}`;
+        };
+        
+        const processBatch = async (batch) => {
+            const promise = this._runRelationshipBatch(batch)
+                .then(() => {
+                    processedCount += batch.length;
+                    console.log(`[GraphBuilder] Processed batch of ${batch.length}. Total processed: ${processedCount}`);
+                })
+                .catch(error => {
+                    console.error(`[GraphBuilder] Error processing a batch:`, error);
+                })
+                .finally(() => {
+                    activePromises.delete(promise);
+                });
+            activePromises.add(promise);
+        };
+
+        for (const row of relIterator) {
+            const sourcePoi = poiStmt.get(row.source_poi_id);
+            const targetPoi = poiStmt.get(row.target_poi_id);
+
+            if (sourcePoi && targetPoi) {
+                const sourceNode = { ...sourcePoi, id: generateSemanticId(sourcePoi) };
+                const targetNode = { ...targetPoi, id: generateSemanticId(targetPoi) };
+
+                currentBatch.push({
+                    source: sourceNode,
+                    target: targetNode,
+                    relationship: {
+                        type: row.type,
+                        confidence: row.confidence_score,
+                    }
+                });
+            }
 
             if (currentBatch.length >= this.config.batchSize) {
-                batches.push([...currentBatch]);
+                if (activePromises.size >= this.config.maxConcurrentBatches) {
+                    await Promise.race(activePromises);
+                }
+                processBatch([...currentBatch]);
                 currentBatch = [];
             }
         }
 
         if (currentBatch.length > 0) {
-            batches.push(currentBatch);
+            processBatch(currentBatch);
         }
 
-        console.log(`[GraphBuilder] Created ${batches.length} relationship batches.`);
-
-        for (let i = 0; i < batches.length; i++) {
-            const batch = batches[i];
-            await this._runRelationshipBatch(batch);
-            console.log(`[GraphBuilder] Processed batch ${i + 1}/${batches.length}`);
-        }
+        await Promise.allSettled(activePromises);
+        console.log(`[GraphBuilder] All relationship batches have been processed.`);
     }
 
     async _runRelationshipBatch(batch) {
-        const session = this.neo4jDriver.session({ database: config.NEO4J_DATABASE });
+        const session = this.neo4jDriver.session({ database: this.dbName });
         try {
             const cypher = `
-                UNWIND $batch as rel
-                MERGE (source:POI {id: rel.source_poi_id})
-                MERGE (target:POI {id: rel.target_poi_id})
-                CALL apoc.create.relationship(source, rel.type, {confidence: rel.confidence}, target) YIELD rel as createdRel
-                RETURN count(createdRel) as created
+                UNWIND $batch as item
+                MERGE (source:POI {id: item.source.id})
+                ON CREATE SET source += item.source
+                MERGE (target:POI {id: item.target.id})
+                ON CREATE SET target += item.target
+                MERGE (source)-[r:RELATIONSHIP {type: item.relationship.type}]->(target)
+                ON CREATE SET r.confidence = item.relationship.confidence
+                ON MATCH SET r.confidence = item.relationship.confidence
             `;
-            
-            const fallbackCypher = `
-                UNWIND $batch as rel
-                MERGE (source:POI {id: rel.source_poi_id})
-                MERGE (target:POI {id: rel.target_poi_id})
-                WITH source, target, rel
-                CALL apoc.cypher.doIt(
-                    'MERGE (source)-[r:' + rel.type + ']->(target) SET r.confidence = $confidence',
-                    {source: source, target: target, confidence: rel.confidence}
-                ) YIELD value
-                RETURN count(value) as created
-            `;
-
-            try {
-                await session.run(cypher, { batch });
-            } catch (error) {
-                if (error.message.includes('apoc')) {
-                    console.warn('[GraphBuilder] APOC not available, trying fallback.');
-                    await session.run(fallbackCypher, { batch });
-                } else {
-                    throw error;
-                }
-            }
+            await session.run(cypher, { batch });
+        } catch (error) {
+            console.error(`[GraphBuilder] Error processing relationship batch:`, error);
+            throw error;
         } finally {
             await session.close();
         }

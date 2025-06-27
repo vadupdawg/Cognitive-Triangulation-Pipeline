@@ -1,14 +1,23 @@
 const { Worker } = require('bullmq');
 
 class DirectoryAggregationWorker {
-    constructor(queueManager, cacheClient) {
+    constructor(queueManager, cacheClient, options = {}) {
         this.queueManager = queueManager;
         this.cacheClient = cacheClient;
         this.directoryResolutionQueue = this.queueManager.getQueue('directory-resolution-queue');
-        this.worker = new Worker('directory-aggregation-queue', this.process.bind(this), {
-            connection: this.queueManager.connectionOptions,
-            concurrency: 10,
-        });
+        
+        if (!options.processOnly) {
+            this.worker = new Worker('directory-aggregation-queue', this.process.bind(this), {
+                connection: this.queueManager.connectionOptions,
+                concurrency: 10,
+            });
+        }
+    }
+
+    async close() {
+        if (this.worker) {
+            await this.worker.close();
+        }
     }
 
     async process(job) {

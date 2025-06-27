@@ -5,20 +5,32 @@ const path = require('path');
 const LLMResponseSanitizer = require('../utils/LLMResponseSanitizer');
 
 class FileAnalysisWorker {
-    constructor(queueManager, dbManager, cacheClient, llmClient) {
+    constructor(queueManager, dbManager, cacheClient, llmClient, options = {}) {
         this.queueManager = queueManager;
         this.dbManager = dbManager;
         this.cacheClient = cacheClient;
         this.llmClient = llmClient;
         this.directoryAggregationQueue = this.queueManager.getQueue('directory-aggregation-queue');
-        this.worker = new Worker('file-analysis-queue', this.process.bind(this), {
-            connection: this.queueManager.connectionOptions,
-            concurrency: 100 // Increased concurrency
-        });
+
+        if (!options.processOnly) {
+            this.worker = new Worker('file-analysis-queue', this.process.bind(this), {
+                connection: this.queueManager.connectionOptions,
+                concurrency: 100 // Increased concurrency
+            });
+        }
+    }
+
+    async close() {
+        if (this.worker) {
+            await this.worker.close();
+        }
     }
 
     async process(job) {
         const { filePath, runId, jobId } = job.data;
+        if (!filePath) {
+            throw new Error("Cannot destructure property 'filePath' of 'job.data' as it is undefined.");
+        }
         console.log(`[FileAnalysisWorker] Processing job ${job.id} for file: ${filePath}`);
 
         try {

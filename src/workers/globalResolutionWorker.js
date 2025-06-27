@@ -3,34 +3,33 @@ const { DatabaseManager } = require('../utils/sqliteDb');
 const { Worker } = require('bullmq');
 
 class GlobalResolutionWorker {
-    /**
-     * Initializes the worker by setting up dependencies and creating a BullMQ worker instance.
-     * @param {QueueManager} queueManager - The queue manager instance.
-     * @param {LLMClient} llmClient - The client for interacting with the LLM.
-     * @param {DatabaseClient} dbClient - The client for database operations.
-     * @param {number} [concurrency=1] - The number of concurrent jobs this worker can process.
-     */
-    constructor(queueManager, llmClient, dbClient, concurrency = 1) {
+    constructor(queueManager, llmClient, dbClient, options = {}) {
         this.llmClient = llmClient;
         this.dbClient = dbClient;
-        this.worker = new Worker(
-            'global-resolution-queue',
-            this.processJob.bind(this),
-            { connection: queueManager.connectionOptions, concurrency }
-        );
 
-        if (this.worker) {
+        if (!options.processOnly) {
+            this.worker = new Worker(
+                'global-resolution-queue',
+                this.processJob.bind(this),
+                { connection: queueManager.connectionOptions, concurrency: options.concurrency || 1 }
+            );
+
             this.worker.on('completed', (job) => {
                 logger.info(`Job ${job.id} (Global Resolution) completed successfully.`);
             });
 
             this.worker.on('failed', (job, err) => {
-                // GRW-003 Remediation: Avoid logging the entire error object.
                 logger.error(`Job ${job.id} (Global Resolution) failed: ${err.message}`, {
                     jobId: job.id,
                     error_message: err.message,
                 });
             });
+        }
+    }
+
+    async close() {
+        if (this.worker) {
+            await this.worker.close();
         }
     }
 

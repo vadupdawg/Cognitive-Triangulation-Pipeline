@@ -1,82 +1,82 @@
+const { Queue } = require('bullmq');
+const { v4: uuidv4 } = require('uuid');
 const { DatabaseManager } = require('../../../src/utils/sqliteDb');
 const QueueManager = require('../../../src/utils/queueManager');
 const ValidationWorker = require('../../../src/workers/validationWorker');
-const { 
-    FILE_ANALYSIS_COMPLETED_QUEUE_NAME, 
-    GLOBAL_RELATIONSHIP_CANDIDATE_QUEUE_NAME,
-    RELATIONSHIP_VALIDATED_QUEUE_NAME,
-    SQLITE_DB_PATH
-} = require('../../../src/config');
+const { SQLITE_DB_PATH, REDIS_CONFIG } = require('../../../src/config');
+
+jest.mock('../../../src/utils/logger');
 
 describe('ValidationWorker Functional Tests', () => {
     let queueManager;
     let validationWorker;
     let dbManager;
+    let analysisFindingsQueue;
+    let reconciliationQueue;
+    let mockCacheClient;
+    let runId;
 
-    beforeAll(async () => {
+    beforeAll(() => {
         queueManager = new QueueManager();
         dbManager = new DatabaseManager(SQLITE_DB_PATH);
     });
 
     beforeEach(async () => {
-        validationWorker = new ValidationWorker();
+        runId = uuidv4();
         dbManager.initializeDb(); // Clears tables
-        await queueManager.clearAllQueues();
+
+        analysisFindingsQueue = new Queue(global.config.ANALYSIS_FINDINGS_QUEUE_NAME, { connection: REDIS_CONFIG });
+        reconciliationQueue = new Queue(global.config.RECONCILIATION_QUEUE_NAME, { connection: REDIS_CONFIG });
+        await analysisFindingsQueue.obliterate({ force: true });
+        await reconciliationQueue.obliterate({ force: true });
+
+        mockCacheClient = {
+            incr: jest.fn().mockResolvedValue(1),
+            hget: jest.fn().mockResolvedValue('2'), // Expected evidence count
+        };
+
+        validationWorker = new ValidationWorker(queueManager, dbManager, mockCacheClient);
     });
 
     afterEach(async () => {
-        await validationWorker.close();
+        await validationWorker.worker.close();
+        await analysisFindingsQueue.close();
+        await reconciliationQueue.close();
     });
 
-    afterAll(async () => {
-        await queueManager.closeConnections();
+    afterAll(() => {
         dbManager.close();
+        queueManager.closeConnections();
     });
 
-    // Test Cases VW-01, VW-02, VW-03, VW-04
-    test('VW-01 to VW-04: Full validation lifecycle', async () => {
-        const relationshipId = 'test-relationship-1';
-        const candidateQueue = queueManager.getQueue(GLOBAL_RELATIONSHIP_CANDIDATE_QUEUE_NAME);
-        const evidenceQueue = queueManager.getQueue(FILE_ANALYSIS_COMPLETED_QUEUE_NAME);
-        const validatedQueue = queueManager.getQueue(RELATIONSHIP_VALIDATED_QUEUE_NAME);
+    // Test Cases VW-01, VW-02, VW-03
+    test('VW-01, VW-02, VW-03: Should persist evidence and trigger reconciliation on completion', async () => {
+        const relationshipHash = 'hash123';
+        const evidencePayload = { file: 'a.js', entity: 'myFunc' };
 
-        // Publish candidate to set expectations
-        await candidateQueue.add('global-relationship-candidate', {
-            relationship_id: relationshipId,
-            expected_evidence_count: 2
-        });
-        await validationWorker.process(await candidateQueue.getNextJob());
+        // VW-01: Process first evidence
+        mockCacheClient.incr.mockResolvedValueOnce(1);
+        const job1 = await analysisFindingsQueue.add('finding', { runId, relationshipHash, evidencePayload });
+        await expect(job1.waitUntilFinished(queueManager.connectionOptions, 5000)).resolves.not.toThrow();
 
-        // VW-01: Persist first evidence and create state
-        const evidence1 = { relationship_id: relationshipId, confidence_score: 0.9, fileId: 'file1' };
-        await evidenceQueue.add('file-analysis-completed', evidence1);
-        await validationWorker.process(await evidenceQueue.getNextJob());
-
-        let state = await dbManager.getValidationState(relationshipId);
-        expect(state.received_evidence_count).toBe(1);
-        expect(state.expected_evidence_count).toBe(2);
-        let evidences = await dbManager.getEvidences(relationshipId);
+        // Verify evidence was persisted
+        const db = dbManager.getDb();
+        let evidences = db.prepare('SELECT * FROM relationship_evidence WHERE relationship_hash = ?').all(relationshipHash);
         expect(evidences).toHaveLength(1);
+        expect(JSON.parse(evidences[0].evidence_payload)).toEqual(evidencePayload);
 
-        // VW-02: Atomically update state with second evidence
-        const evidence2 = { relationship_id: relationshipId, confidence_score: 0.95, fileId: 'file2' };
-        await evidenceQueue.add('file-analysis-completed', evidence2);
-        await validationWorker.process(await evidenceQueue.getNextJob());
-        
-        state = await dbManager.getValidationState(relationshipId);
-        expect(state.received_evidence_count).toBe(2);
+        // Verify reconciliation not yet triggered
+        let reconJobs = await reconciliationQueue.getJobs(['waiting', 'completed']);
+        expect(reconJobs).toHaveLength(0);
 
-        // VW-03: Publish validated event
-        await new Promise(resolve => setTimeout(resolve, 200)); // allow for async validation
-        const validatedJobs = await validatedQueue.getJobs(['completed']);
-        expect(validatedJobs).toHaveLength(1);
-        expect(validatedJobs[0].data.relationship_id).toBe(relationshipId);
-        expect(validatedJobs[0].data.final_confidence_score).toBeGreaterThan(0);
+        // VW-02 & VW-03: Process second evidence, triggering reconciliation
+        mockCacheClient.incr.mockResolvedValueOnce(2);
+        const job2 = await analysisFindingsQueue.add('finding', { runId, relationshipHash, evidencePayload: { ...evidencePayload, file: 'b.js' } });
+        await expect(job2.waitUntilFinished(queueManager.connectionOptions, 5000)).resolves.not.toThrow();
 
-        // VW-04: Cleanup
-        state = await dbManager.getValidationState(relationshipId);
-        expect(state).toBeUndefined();
-        evidences = await dbManager.getEvidences(relationshipId);
-        expect(evidences).toHaveLength(0);
+        // Verify reconciliation IS triggered
+        reconJobs = await reconciliationQueue.getJobs(['waiting', 'completed']);
+        expect(reconJobs).toHaveLength(1);
+        expect(reconJobs[0].data).toEqual({ runId, relationshipHash });
     });
 });

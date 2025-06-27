@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS relationships (
     confidence_score REAL,
     FOREIGN KEY (source_poi_id) REFERENCES pois (id) ON DELETE CASCADE,
     FOREIGN KEY (target_poi_id) REFERENCES pois (id) ON DELETE CASCADE
-);
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_relationships_status ON relationships(status);
 
 CREATE TABLE IF NOT EXISTS directory_summaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
