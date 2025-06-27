@@ -1,123 +1,98 @@
-# Cognitive Triangulation v2 -- Key Data Models (Revised)
+# Cognitive Triangulation v2 - Data Models (Revised)
 
-This document serves as the single source of truth for the schemas of the key data structures and database tables used throughout the revised Cognitive Triangulation v2 system.
+This document defines the structure of the key data objects and database schemas used within the revised, resilient system. The core change is the move away from a monolithic manifest object towards decomposed, native data structures and a data-driven validation flow.
 
-These definitions are derived from [`docs/specifications/cognitive_triangulation/job_data_models_v2_specs.md`](../../specifications/cognitive_triangulation/job_data_models_v2_specs.md) and have been updated to reflect the new architecture.
+---
 
-## 1. Redis Data Models
+## 1. Redis Data Structures
 
-### 1.1. `runManifest`
+The monolithic run manifest is replaced by a set of targeted, high-performance Redis data structures, scoped by `runId`.
 
--   **Location--** Stored in Redis, keyed by `manifest:{runId}`.
--   **Purpose--** The master plan for an analysis run. It is created by `EntityScout` with a pre-computed list of candidate relationships and is read by `ValidationWorker` to orchestrate reconciliation.
+### 1.1. Run Configuration
+-   **Key--** `run:<runId>:config`
+-   **Type--** `String (JSON)`
+-   **Description--** Stores run-level configuration, such as the target path and analysis parameters.
+-   **Example--** `{"rootPath": "/app/src", "ignorePatterns": ["node_modules"]}`
 
-#### Schema
+### 1.2. Job Sets
+-   **Keys--**
+    -   `run:<runId>:jobs:files`
+    -   `run:<runId>:jobs:dirs`
+    -   `run:<runId>:jobs:global`
+-   **Type--** `Set`
+-   **Description--** Collections of unique `jobId`s for each job type. This allows for efficient tracking of job categories.
+-   **Example Command--** `SADD run:run123:jobs:files "job-1" "job-2"`
 
-```json
-{
-  "runId": "string",
-  "jobGraph": {
-    "file-analysis": ["string"],
-    "directory-resolution": ["string"],
-    "global-resolution": ["string"]
-  },
-  "relationshipEvidenceMap": {
-    "string -- (relationshipHash)": {
-        "expectedEvidenceCount": "number",
-        "jobIds": ["string -- (jobId)"]
-    }
-  }
-}
-```
+### 1.3. Relationship Definition Map
+-   **Key--** `run:<runId>:rel_map`
+-   **Type--** `Hash`
+-   **Description--** Maps a `relationshipHash` to the number of evidence sources expected for validation. This is the authoritative source for reconciliation logic.
+-   **Fields--**
+    -   **Key--** `relationshipHash` (e.g., `c4a1b2...e3f4`)
+    -   **Value--** `expectedEvidenceCount` (e.g., `2`)
+-   **Example Command--** `HSETNX run:run123:rel_map "c4a1b2...e3f4" 2`
 
-#### Field Descriptions
+### 1.4. File Path to Job ID Map
+-   **Key--** `run:<runId>:file_to_job_map`
+-   **Type--** `Hash`
+-   **Description--** A lookup table created by the `EntityScout` that maps a full file path to its assigned `jobId`. This is critical for workers to identify the `jobId` of related files they discover.
+-   **Fields--**
+    -   **Key--** File path (e.g., `/app/src/utils/helpers.js`)
+    -   **Value--** `jobId` (e.g., `job-17`)
+-   **Example Command--** `HSET run:run123:file_to_job_map "/app/src/utils/helpers.js" "job-17"`
 
--   `relationshipEvidenceMap`-- A dictionary where the key is the relationship hash.
-    -   `expectedEvidenceCount`-- The total number of pieces of evidence expected for this relationship.
-    -   `jobIds`-- An array of job IDs expected to provide an opinion on this relationship.
+### 1.5. Evidence Counter
+-   **Key--** `evidence_count:<runId>:<relationshipHash>`
+-   **Type--** `String` (used as an atomic counter)
+-   **Description--** A distributed, atomic counter for tracking the number of evidence payloads received for a given relationship.
+-   **Example Command--** `INCR evidence_count:run123:c4a1b2...e3f4`
 
-### 1.2. `evidenceCounter`
+---
 
--   **Location--** Stored in Redis, keyed by `evidence_count:{runId}:{relationshipHash}`.
--   **Purpose--** A simple atomic counter used by the `ValidationWorker` to track the number of evidence payloads received for a specific relationship.
+## 2. Job Payloads (BullMQ)
 
-## 2. SQLite Table Schemas
+### 2.1. `directory-analysis` & `file-analysis` Jobs
+(Unchanged from original design)
 
-### 2.1. `relationships` Table
-
--   **Purpose--** Stores the state of each relationship as it moves through the validation pipeline.
-
-```sql
-CREATE TABLE relationships (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id TEXT NOT NULL,
-    relationship_hash TEXT NOT NULL,
-    source_poi TEXT NOT NULL,
-    target_poi TEXT NOT NULL,
-    type TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'PENDING_VALIDATION', -- PENDING_VALIDATION, VALIDATED, CONFLICT
-    confidence_score REAL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(run_id, relationship_hash)
-);
-```
-
-### 2.2. `relationship_evidence` Table
-
--   **Purpose--** The primary storage for the full evidence payloads generated by analysis workers. This replaces the old pattern of storing this data in Redis.
-
-```sql
-CREATE TABLE relationship_evidence (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id TEXT NOT NULL,
-    relationship_hash TEXT NOT NULL,
-    source_worker TEXT NOT NULL,
-    found_relationship BOOLEAN NOT NULL,
-    initial_score REAL NOT NULL,
-    raw_llm_output TEXT, -- Stored as a JSON string
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_evidence_run_hash ON relationship_evidence(run_id, relationship_hash);
-```
-
-### 2.3. `outbox` Table
-
--   **Purpose--** Implements the Transactional Outbox Pattern. Workers write event payloads here as part of the same transaction in which they write their evidence.
-
-```sql
-CREATE TABLE outbox (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    payload TEXT NOT NULL, -- The full JSON payload of the event
-    status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, PUBLISHED
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-## 3. BullMQ Data Models
-
-### 3.1. `AnalysisCompletedEvent`
-
--   **Location--** Passed as a message payload within BullMQ, published from the `outbox` table.
--   **Purpose--** The standardized event structure that all analysis workers use to signal their completion.
-
-#### Schema
-
-```json
-{
-  "runId": "string",
-  "jobId": "string",
-  "sourceWorker": "string",
-  "findings": [
+### 2.2. `reconcile-relationship` Job **(New)**
+-   **Description--** An idempotent job enqueued by a `ValidationWorker` when the evidence counter matches the expected count.
+-   **Payload--**
+    ```json
     {
-      "relationshipHash": "string"
-      // Note-- The full evidence is NOT in the event.
-      // The event is now just a lightweight notification.
+      "runId"-- "unique-run-identifier-123",
+      "relationshipHash"-- "c4a1b2...e3f4"
     }
-  ]
-}
-```
+    ```
 
-#### Field Descriptions
+### 2.3. `graph-builder` (Finalizer) Job
+(Unchanged from original design)
 
--   The event is now significantly lighter. It acts as a notification to trigger the `ValidationWorker`, which then looks up the relevant data in Redis (counters) and SQLite (evidence).
+---
+
+## 3. SQLite Database Schema
+
+The primary database holds the transactional outbox, persisted evidence payloads, and the final validated results.
+
+### 3.1. `outbox` Table
+-   **Description--** Used by the Transactional Outbox pattern. Each compute node runs a sidecar publisher that polls its own local SQLite DB file.
+-   **Schema--** (Unchanged from original design)
+
+### 3.2. `relationship_evidence` Table **(New)**
+-   **Description--** Persists the full evidence payload from each `analysis-finding` event. This replaces the in-memory `pendingEvidence` map.
+-   **Schema--**
+    -   **`id`**-- `INTEGER PRIMARY KEY AUTOINCREMENT`
+    -   **`run_id`**-- `TEXT NOT NULL`
+    -   **`relationship_hash`**-- `TEXT NOT NULL`
+    -   **`job_id`**-- `TEXT NOT NULL`
+    -   **`evidence_payload`**-- `TEXT NOT NULL` (The full JSON `finding` object from the original `analysis-finding` event)
+    -   **`created_at`**-- `DATETIME DEFAULT CURRENT_TIMESTAMP`
+-   **Indexes--** A compound index on `(run_id, relationship_hash)` is critical for fast lookups by the reconciliation job.
+
+### 3.3. `relationships` Table
+-   **Description--** Stores the final, validated relationships.
+-   **Schema--** (Unchanged from original design)
+
+---
+
+## 4. Neo4j Graph Model
+(Unchanged from original design)

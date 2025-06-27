@@ -1,107 +1,149 @@
-# Cognitive Triangulation v2 -- Data Flow & Interactions (Revised)
+# Cognitive Triangulation v2 - Data Flow and Interactions (Revised)
 
-This document details the revised data flow and key interaction patterns within the Cognitive Triangulation v2 system. The new flow enhances resilience and scalability by incorporating job-dependency orchestration, the transactional outbox pattern, and a more efficient evidence handling strategy.
+This document details the resilient, data-driven flow of interactions between the components of the revised Cognitive Triangulation v2 system.
 
-## 1. Overall Data Flow Diagram (Revised)
+---
 
-This diagram provides a comprehensive view of the entire process, reflecting the architectural changes.
+## 1. Phase 1-- Initialization and Decomposed Manifest Creation
+
+The `EntityScout` service initializes the run and seeds Redis with efficient, decomposed data structures.
 
 ```mermaid
 sequenceDiagram
     participant User
     participant EntityScout
-    participant Redis
-    participant BullMQ
-    participant AnalysisWorkers as (File, Dir, Global)
-    participant SQLite
-    participant OutboxPublisher
-    participant ValidationWorker
-    participant GraphBuilderWorker
+    participant Redis as Cache
+    participant BullMQ as Queue
 
-    User->>EntityScout: 1. Run Analysis(rootPath)
-    Note over EntityScout: Generates candidate relationships
-    EntityScout->>BullMQ: 2. enqueue(All jobs in PAUSED state)
-    EntityScout->>Redis: 3. write(manifest:{runId})
-    EntityScout->>BullMQ: 4. resumeQueues()
-
-    loop Parallel Analysis
-        BullMQ-->>AnalysisWorkers: 5. process(job)
-        AnalysisWorkers->>SQLite: 6. BEGIN TRANSACTION
-        Note right of AnalysisWorkers: Write evidence to `relationship_evidence`
-        Note right of AnalysisWorkers: Write event to `outbox`
-        AnalysisWorkers->>SQLite: 7. COMMIT
-    end
-
-    loop Event Publication
-        OutboxPublisher->>SQLite: 8. read(unprocessed events from outbox)
-        OutboxPublisher->>BullMQ: 9. publish(analysis-completed event)
-        OutboxPublisher->>SQLite: 10. markEventAsProcessed()
-    end
-
-    BullMQ-->>ValidationWorker: 11. consume(analysis-completed event)
-    ValidationWorker->>Redis: 12. INCR(evidence_count:{runId}:{hash})
-
-    loop For each Relationship
-        ValidationWorker->>Redis: 13. Check if count matches manifest
-        opt All Evidence Ready
-            ValidationWorker->>BullMQ: 14. Enqueue 'reconcile' job
-        end
-    end
-    
-    Note over BullMQ: When all analysis jobs complete...
-    BullMQ-->>GraphBuilderWorker: 15. process(finalizer job)
-    GraphBuilderWorker->>SQLite: 16. read(VALIDATED relationships)
-    GraphBuilderWorker->>Neo4j: 17. write(graph nodes, edges)
+    User->>+EntityScout-- start(runConfig)
+    EntityScout->>EntityScout-- Scan filesystem, create jobs
+    EntityScout->>+Redis-- SADD run:123:jobs:files ...
+    EntityScout->>+Redis-- HSET run:123:file_to_job_map ...
+    Redis-->>-EntityScout-- OK
+    EntityScout->>+BullMQ-- addJob('directory-analysis', job1)
+    BullMQ-->>-EntityScout-- Job Queued
+    EntityScout-->>-User-- Initialization Complete
 ```
 
-## 2. Key Interaction-- Atomic Evidence Handling & Validation
+1.  **Initiation--** `EntityScout` is started.
+2.  **Manifest Creation--** It scans the filesystem and creates jobs.
+3.  **Manifest Storage--** It populates the Redis `Set`s with job IDs and, critically, populates the `file_to_job_map` `Hash` with all file paths and their job IDs.
+4.  **Job Enqueueing--** Initial jobs are added to the queue.
 
-This sequence diagram focuses on the core validation loop, highlighting the transactional outbox pattern and the revised use of Redis and SQLite.
+---
 
-**Context:** The `runManifest` is in Redis, and analysis queues are active.
+## 2. Phase 2-- Parallel Analysis and Targeted Redis Interaction
+
+Analysis workers are fully stateless and use targeted Redis commands.
 
 ```mermaid
 sequenceDiagram
-    participant Worker as Analysis Worker
-    participant SQLite
-    participant OutboxPublisher
-    participant BullMQ
-    participant ValidationWorker
-    participant Redis
+    participant Worker as File/Dir Worker
+    participant BullMQ as Queue
+    participant LLM
+    participant Redis as Cache
+    participant SQLite_Outbox as Local Outbox DB
 
-    Worker->>SQLite: 1. BEGIN TRANSACTION
-    Worker->>SQLite: 2. INSERT into `relationship_evidence`
-    Worker->>SQLite: 3. INSERT into `outbox`
-    Worker->>SQLite: 4. COMMIT
-
-    OutboxPublisher->>SQLite: 5. Polls `outbox` for new events
-    SQLite-->>OutboxPublisher: Returns event payload
-    OutboxPublisher->>BullMQ: 6. Publishes `AnalysisCompletedEvent`
-    OutboxPublisher->>SQLite: 7. Marks event as processed
-
-    BullMQ-->>ValidationWorker: 8. Delivers Event
-    ValidationWorker->>Redis: 9. INCR `evidence_count:{runId}:{hash}`
-    Redis-->>ValidationWorker: Returns new count
-
-    Note over ValidationWorker: 10. Compare count to manifest's expected count
-
-    alt All evidence has arrived
-        ValidationWorker->>BullMQ: 11. Enqueue `reconcile-relationship` job
-    end
-
-    BullMQ-->>ValidationWorker: 12. Delivers `reconcile` job
-    ValidationWorker->>SQLite: 13. SELECT all evidence from `relationship_evidence` WHERE hash=...
-
-    Note over ValidationWorker: 14. Calls `ConfidenceScoringService.calculateFinalScore(evidence)`
-
-    ValidationWorker->>SQLite: 15. UPDATE `relationships` SET status='VALIDATED', score=...
+    BullMQ->>+Worker-- process(job)
+    Worker->>+LLM-- analyze(fileContent)
+    LLM-->>-Worker-- analysisResult (findings)
+    Note right of Worker-- For each relationship found...
+    Worker->>+Redis-- HGET run:123:file_to_job_map, "/path/to/other/file.js"
+    Redis-->>-Worker-- "job-17"
+    Worker->>+Redis-- HSETNX run:123:rel_map, hash, 2
+    Redis-->>-Worker-- 1 (New hash added)
+    Worker->>+SQLite_Outbox-- INSERT INTO outbox (payload)
+    SQLite_Outbox-->>-Worker-- OK
+    Worker->>-BullMQ-- Job Complete
 ```
 
-### Explanation of the Revised Interaction
+1.  **Job Consumption--** A worker takes a job.
+2.  **LLM Analysis--** It identifies a potential relationship.
+3.  **Job ID Lookup--** It performs a fast, targeted `HGET` to the `file_to_job_map` in Redis to find the `jobId` of the related file.
+4.  **Manifest Update--** It uses `HSETNX` on the `rel_map` `Hash` to record the relationship and its expected evidence count.
+5.  **Outbox Write--** It writes the finding to its **local** SQLite outbox database.
 
-1.  **Guaranteed Manifest Availability:** `EntityScout` now enqueues all jobs in a **paused** state and only resumes the queues *after* the manifest has been successfully written to Redis. This completely eliminates the race condition where a worker might start before its contract is defined.
-2.  **Transactional Outbox for Atomicity:** Workers no longer publish directly to the message queue. Instead, they write their evidence and the event payload to two separate tables (`relationship_evidence` and `outbox`) within a **single database transaction**. This guarantees that an event is never lost if the worker crashes after writing its data but before publishing.
-3.  **Decoupled Event Publication:** A simple, robust `OutboxPublisher` process handles the critical task of moving events from the database to the message queue, ensuring reliability.
-4.  **Efficient Evidence Storage:** Large evidence payloads are written directly to SQLite, a database optimized for such storage.
-5.  **Coordination via Atomic Counters:** Redis is now used for its primary strength-- fast, atomic operations. The `ValidationWorker` simply increments a counter for each piece of evidence received. This is a low-memory, high-performance way to track progress.
-6.  **Dependency-Managed Finalization:** The `GraphBuilderWorker` is now triggered automatically by BullMQ when all its dependent analysis jobs complete successfully. This is a much more robust and less error-prone mechanism than having a coordinator agent manually track job completion.
+---
+
+## 3. Phase 3-- Reliable Event Publication (Sidecar Model)
+
+The `TransactionalOutboxPublisher` runs as a sidecar on each compute node.
+
+```mermaid
+sequenceDiagram
+    participant Publisher as Outbox Publisher Sidecar
+    participant SQLite_Outbox as Local Outbox DB
+    participant BullMQ as Queue
+
+    loop Polling Cycle (on each node)
+        Publisher->>+SQLite_Outbox-- SELECT * FROM outbox WHERE status = 'PENDING'
+        SQLite_Outbox-->>-Publisher-- [event1]
+        Publisher->>+BullMQ-- publish('analysis-finding', event1.payload)
+        BullMQ-->>-Publisher-- OK
+        Publisher->>+SQLite_Outbox-- UPDATE outbox SET status = 'PUBLISHED' WHERE id = event1.id
+        SQLite_Outbox-->>-Publisher-- OK
+    end
+```
+
+1.  **Local Polling--** The sidecar publisher polls its local `outbox` table.
+2.  **Publish--** It publishes the event to the central message queue.
+3.  **Update--** It updates the status in the **local** database.
+
+---
+
+## 4. Phase 4-- Data-Driven Validation and Reconciliation
+
+This new, two-stage flow replaces the stateful coordinator.
+
+### 4a. Evidence Ingestion & Counting (ValidationWorker)
+
+```mermaid
+sequenceDiagram
+    participant Validator as ValidationWorker
+    participant BullMQ as Queue
+    participant Redis as Cache
+    participant SQLite_Primary as Primary DB
+
+    BullMQ->>+Validator-- handleAnalysisEvent(event)
+    Validator->>+SQLite_Primary-- INSERT INTO relationship_evidence (payload)
+    SQLite_Primary-->>-Validator-- OK
+    Validator->>+Redis-- INCR evidence_count:123:hash
+    Redis-->>-Validator-- current_count
+    Validator->>+Redis-- HGET run:123:rel_map, hash
+    Redis-->>-Validator-- expected_count
+    alt current_count == expected_count
+        Validator->>+BullMQ-- addJob('reconcile-relationship', {hash})
+        BullMQ-->>-Validator-- Reconciliation Job Queued
+    end
+```
+
+1.  **Event Consumption--** A `ValidationWorker` receives an `analysis-finding` event.
+2.  **Evidence Persistence--** It immediately persists the full evidence payload into the central `relationship_evidence` table.
+3.  **Atomic Count--** It performs a single, atomic `INCR` on the relationship's counter in Redis.
+4.  **Trigger Check--** It compares the new count with the expected count from the `rel_map`. If they match, it enqueues a `reconcile-relationship` job.
+
+### 4b. Final Reconciliation (ReconciliationWorker)
+
+```mermaid
+sequenceDiagram
+    participant Reconciler as ReconciliationWorker
+    participant BullMQ as Queue
+    participant SQLite_Primary as Primary DB
+
+    BullMQ->>+Reconciler-- process(reconcileJob)
+    Reconciler->>+SQLite_Primary-- SELECT * FROM relationship_evidence WHERE hash = ?
+    SQLite_Primary-->>-Reconciler-- [evidence1, evidence2]
+    Reconciler->>Reconciler-- CALCULATE_CONFIDENCE(...)
+    alt Confidence > Threshold
+        Reconciler->>+SQLite_Primary-- INSERT INTO relationships (validated_data)
+        SQLite_Primary-->>-Reconciler-- OK
+    end
+```
+1.  **Job Consumption--** A `ReconciliationWorker` picks up a `reconcile-relationship` job.
+2.  **Evidence Fetching--** It queries the `relationship_evidence` table to get all evidence for the hash.
+3.  **Scoring & Persistence--** It calculates a confidence score and saves the final validated relationship to the `relationships` table.
+
+---
+
+## 5. Phase 5-- Final Graph Construction
+(Unchanged from original design)

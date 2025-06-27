@@ -1,116 +1,94 @@
-# Cognitive Triangulation v2 -- Component Breakdown (Revised)
+# Cognitive Triangulation v2 - Component Breakdown (Revised)
 
-This document provides a detailed description of each component in the revised Cognitive Triangulation v2 system, outlining their responsibilities, interactions, and how they fit into the overall module structure.
+This document provides a detailed description of each service and worker within the revised Cognitive Triangulation v2 system.
 
-## 1. Orchestration & Coordination Layer
+---
 
-This layer is responsible for initiating, managing, and finalizing the analysis run.
+## 1. EntityScout
 
-### 1.1. `EntityScout` Agent
+-   **Purpose--** To initialize an analysis run by scanning the target directory, creating all necessary jobs, and generating the initial, decomposed manifest in Redis.
 
--   **Module--** `src/agents/EntityScout_v2.js`
--   **Responsibilities--**
-    -   Acts as the primary entry point for a new analysis run.
-    -   Performs a fast, shallow "first-pass" analysis (e.g., using regex) to generate a **candidate list of potential relationships**.
-    -   Constructs the `runManifest`, which includes the `jobGraph` and the `relationshipEvidenceMap` populated with the candidate relationships. This makes the manifest a complete, upfront contract.
-    -   Saves the complete `runManifest` to the Redis cache.
-    -   Enqueues all analysis jobs in a **paused** state.
-    -   Creates a final `GraphBuilderWorker` job that has a **job dependency** on all other analysis jobs.
-    -   **Resumes** the queues only after the manifest is successfully saved and all jobs are created.
--   **Key Interactions--**
-    -   Writes to **Redis** to store the `runManifest`.
-    -   Writes to **BullMQ** to enqueue all analysis jobs and the finalizer job.
+### Key Responsibilities (Revised)--
 
-### 1.2. `ValidationWorker`
+-   **Filesystem Scan--** Recursively scans a root path to identify all files and directories.
+-   **Job & Manifest Creation--**
+    -   Assigns a unique `jobId` to each file and directory.
+    -   Populates Redis `Set`s with these job IDs (e.g., `run:<runId>:jobs:files`).
+    -   **Crucially, it creates the `file_to_job_map` Redis Hash**, mapping every discovered file path to its corresponding `jobId`. This map is essential for downstream workers.
+-   **Initial Enqueue--** Adds the first set of jobs to the message queue to start the pipeline.
 
--   **Module--** `src/workers/ValidationWorker.js`
--   **Replaces--** `ValidationCoordinator` Agent
--   **Responsibilities--**
-    -   A horizontally scalable, stateless worker that orchestrates the validation process.
-    -   Consumes `*-analysis-completed` events from the BullMQ event stream.
-    -   For each finding, it atomically increments a counter in Redis (`evidence_count:{runId}:{hash}`).
-    -   It compares this counter against the expected count from the `runManifest`.
-    -   If the count matches, it enqueues a `reconcile-relationship` job for itself.
-    -   The `reconcile-relationship` job fetches the full evidence payloads from the **SQLite** `relationship_evidence` table.
-    -   It calls the `ConfidenceScoringService` to compute the final score.
-    -   Persists the final, validated relationship data (with status `VALIDATED` or `CONFLICT`) to the main `relationships` table in SQLite.
--   **Key Interactions--**
-    -   Consumes events from **BullMQ**.
-    -   Reads from and writes to **Redis** for manifest data and atomic counters.
-    -   Reads from and writes to **SQLite** to get evidence and store validated data.
-    -   Calls the **`ConfidenceScoringService`**.
+---
 
-## 2. Analysis Worker Layer
+## 2. Analysis Workers
 
-These are stateless, scalable workers that perform the core analysis tasks. They consume jobs from BullMQ and write their findings to the database, creating an outbox event within the same transaction.
+These stateless workers form the core of the parallel analysis engine.
 
-### 2.1. `FileAnalysisWorker`
+### 2.1. FileAnalysisWorker
 
--   **Module--** `src/workers/FileAnalysisWorker_v2.js`
--   **Responsibilities--**
-    -   Processes a single file.
-    -   Calls an LLM to identify POIs and relationships.
-    -   **Atomic Operation--** In a single database transaction, it--
-        1.  Writes the full evidence payload to the `relationship_evidence` table in SQLite with a `PENDING` status.
-        2.  Writes a corresponding `file-analysis-completed` event to the `outbox` table.
--   **Key Interactions--**
-    -   Consumes jobs from **BullMQ**.
-    -   Writes to the **SQLite** database (`relationship_evidence` and `outbox` tables).
-    -   Calls the **`HashingService`** and **`ConfidenceScoringService`**.
+-   **Purpose--** To analyze a single file for entities and their potential relationships.
 
-### 2.2. `DirectoryResolutionWorker`
+#### Key Responsibilities (Revised)--
 
--   **Module--** `src/workers/DirectoryResolutionWorker_v2.js`
--   **Responsibilities--**
-    -   Processes a single directory.
-    -   Provides an opinion on all candidate relationships involving its constituent files.
-    -   **Atomic Operation--** In a single database transaction, it writes its evidence and an `outbox` event.
--   **Key Interactions--**
-    -   Consumes jobs from **BullMQ**.
-    -   Reads POI data from **SQLite**.
-    -   Writes to the **SQLite** database (`relationship_evidence` and `outbox` tables).
-    -   Calls the **`ConfidenceScoringService`**.
+-   **LLM-based Analysis--** Uses an LLM to identify POIs and potential relationships.
+-   **Job ID Resolution--** When a relationship to an entity in another file is found, it queries the `run:<runId>:file_to_job_map` in Redis to get the `jobId` for the target file.
+-   **Dynamic Manifest Update--** It calculates a `relationshipHash` and uses `HSETNX` on the `run:<runId>:rel_map` Redis Hash to set the `expectedEvidenceCount`.
+-   **Event Emission--** Writes a full `analysis-finding` event into its **local `outbox` table** in a node-specific SQLite database.
 
-### 2.3. `GlobalResolutionWorker`
+### 2.2. DirectoryResolutionWorker
 
--   **Module--** `src/workers/GlobalResolutionWorker_v2.js`
--   **Responsibilities--**
-    -   Processes the entire codebase to find broad, architectural relationships.
-    -   **Atomic Operation--** In a single database transaction, it writes its evidence and an `outbox` event.
--   **Key Interactions--**
-    -   Consumes jobs from **BullMQ**.
-    -   Reads from **SQLite**.
-    -   Writes to the **SQLite** database (`relationship_evidence` and `outbox` tables).
-    -   Calls the **`ConfidenceScoringService`**.
+-   **Purpose--** To analyze a directory's contents and enqueue child jobs.
+-   **Responsibilities--** Similar to the `FileAnalysisWorker`, it can find directory-level relationships, update the manifest, and write to the local outbox.
 
-## 3. Core Services & Persistence
+---
 
-### 3.1. `TransactionalOutboxPublisher`
+## 3. TransactionalOutboxPublisher (Sidecar Model)
 
--   **Module--** `src/services/OutboxPublisher.js`
--   **Responsibilities--**
-    -   A simple, highly reliable, standalone process.
-    -   Polls the `outbox` table in SQLite for unprocessed events.
-    -   Publishes the event to the appropriate BullMQ stream.
-    -   Marks the event as processed in the `outbox` table.
--   **Key Interactions--**
-    -   Reads from **SQLite**.
-    -   Publishes events to **BullMQ**.
+-   **Purpose--** To ensure reliable event delivery from workers to the message queue.
 
-### 3.2. `GraphBuilderWorker`
+### Key Responsibilities (Revised)--
 
--   **Module--** `src/workers/GraphBuilderWorker.js`
--   **Replaces--** `GraphBuilder` Agent
--   **Responsibilities--**
-    -   Processes a single job that is triggered by BullMQ's dependency mechanism only after all analysis jobs for a run have succeeded.
-    -   Reads all data with a `VALIDATED` status from the SQLite database.
-    -   Connects to the **Neo4j** database and persists the final knowledge graph.
--   **Key Interactions--**
-    -   Consumes its finalizer job from **BullMQ**.
-    -   Reads from **SQLite**.
-    -   Writes to **Neo4j**.
+-   **Sidecar Deployment--** This service runs as a **sidecar process** on each compute node that hosts workers.
+-   **Local Polling--** It periodically queries the `outbox` table in the **local SQLite database file** on its node. It does not communicate across the network to other databases.
+-   **Publishing & Atomic Update--** Publishes events to BullMQ and updates the local event status to `PUBLISHED` only upon success.
 
-### 3.3. Other Services
+---
 
--   **`ConfidenceScoringService`--** Unchanged. Provides stateless score calculation logic.
--   **`HashingService`--** Unchanged. Provides deterministic hash generation for relationships.
+## 4. Validation & Reconciliation Workers (New)
+
+The stateful `ValidationCoordinator` is replaced by two distinct, stateless worker types.
+
+### 4.1. ValidationWorker
+
+-   **Purpose--** A stateless, horizontally scalable worker that acts as the first receiver for analysis findings.
+
+#### Key Responsibilities--
+
+-   **Event Consumption--** Consumes `analysis-finding` events from the queue.
+-   **Evidence Persistence--** Saves the entire `finding` payload into the central `relationship_evidence` table in the primary SQLite database.
+-   **Atomic Counting--** Performs an atomic `INCR` on the corresponding Redis key (`evidence_count:<runId>:<relationshipHash>`).
+-   **Reconciliation Trigger--** After incrementing, it fetches the `expectedEvidenceCount` from the `run:<runId>:rel_map` Redis Hash. If the count matches, it enqueues a new, idempotent `reconcile-relationship` job.
+
+### 4.2. ReconciliationWorker
+
+-   **Purpose--** A stateless worker that performs the final validation logic when all evidence is ready.
+
+#### Key Responsibilities--
+
+-   **Job Consumption--** Processes `reconcile-relationship` jobs.
+-   **Evidence Aggregation--** Queries the primary SQLite `relationship_evidence` table to fetch all persisted evidence payloads for the given `relationshipHash`.
+-   **Confidence Scoring--** Uses the `ConfidenceScoringService` to calculate a final score based on all aggregated evidence.
+-   **Persistent Storage--** If the score is sufficient, it writes the final `VALIDATED` record to the `relationships` table in the primary SQLite database.
+
+---
+
+## 5. ConfidenceScoringService
+
+-   **Purpose--** A stateless utility service used by the `ReconciliationWorker`.
+-   **Responsibilities--** (Unchanged from original design)
+
+---
+
+## 6. GraphBuilderWorker
+
+-   **Purpose--** The final worker, responsible for constructing the Neo4j knowledge graph.
+-   **Responsibilities--** (Unchanged from original design)

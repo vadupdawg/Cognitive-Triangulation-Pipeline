@@ -1,77 +1,74 @@
-# Cognitive Triangulation v2 -- System Architecture Overview (Revised)
+# Cognitive Triangulation v2 - System Overview (Revised)
 
 ## 1. Introduction
 
-This document outlines the high-level architecture for the Cognitive Triangulation v2 feature. This revised architecture addresses feedback on the initial design to enhance scalability, resilience, and clarity. The v2 system refactors the previous linear analysis pipeline into a robust, event-driven, and multi-pass validation system. The primary goal is to increase the accuracy and reliability of code relationship detection by corroborating findings from multiple, independent analysis contexts before committing them to the knowledge graph.
+The Cognitive Triangulation v2 system is a distributed, event-driven analysis pipeline designed to build a knowledge graph of a target codebase. It identifies points of interest (POIs) and their relationships.
 
-This design is based on the specifications in [`docs/specifications/cognitive_triangulation/`](../../specifications/cognitive_triangulation/) and the logic defined in [`docs/pseudocode/cognitive_triangulation_v2/`](../../pseudocode/cognitive_triangulation_v2/).
+This revised architecture implements a **decentralized, data-driven validation model** and a **stateless worker pattern** to achieve superior scalability, resilience, and performance. The system is robust against transient failures and processes large codebases efficiently through parallel processing and optimized data storage.
 
-## 2. Architectural Principles (Revised)
+## 2. Core Principles
 
--   **Event-Driven--** Components are decoupled and communicate asynchronously via a message queue (BullMQ). This promotes scalability and resilience.
--   **Scalable Validation--** The centralized `ValidationCoordinator` agent is refactored into a horizontally scalable **`ValidationWorker`**, eliminating a potential bottleneck.
--   **Manifest-Guided Reconciliation--** The `EntityScout` agent generates a `runManifest` containing a pre-computed list of *candidate relationships*. This manifest acts as an explicit contract, defining all expected analysis jobs and the evidence they must produce.
--   **Robust Orchestration--** Pipeline finalization is managed reliably using **BullMQ job dependencies**, removing ambiguity and the need for manual state tracking.
--   **Efficient Evidence Handling--** **SQLite** is used for storing large evidence payloads, while **Redis** is used for its strength in fast, atomic operations (coordination counters).
--   **Atomic Operations--** The **Transactional Outbox Pattern** is enforced for all workers to guarantee that data is committed if and only if its corresponding event can be published, preventing data loss.
--   **Auditable Evidence Trail--** The system stores all evidence gathered for each relationship in SQLite, providing a clear audit trail.
+-   **Asynchronous & Event-Driven--** Components communicate through a message queue, ensuring loose coupling.
+-   **Parallel Processing--** Analysis is broken into small, independent jobs that are executed in parallel by multiple stateless workers.
+-   **Resilience--** The transactional outbox pattern, combined with idempotent workers, guarantees reliable event delivery and prevents data corruption.
+-   **Dynamic Discovery--** A manifest of expected evidence is built dynamically in Redis using high-performance, native data structures.
+-   **Stateless, Data-Driven Validation--** State is managed in resilient data stores (Redis for counters, SQLite for payloads), not in application memory. Validation logic is handled by horizontally scalable, stateless workers.
 
-## 3. High-Level Component Diagram (C4 Model - Level 2, Revised)
+## 3. High-Level Architecture (C4 Model - Level 1, Revised)
 
-This diagram illustrates the revised components and their interactions.
+The diagram below illustrates the main containers and their revised interactions, highlighting the stateless validation flow.
 
 ```mermaid
 graph TD
-    subgraph "Cognitive Triangulation System"
-        EntityScout(EntityScout Agent)
-        ValidationWorker(ValidationWorker)
-        FileWorker(FileAnalysisWorker)
-        DirWorker(DirectoryResolutionWorker)
-        GlobalWorker(GlobalResolutionWorker)
-        GraphBuilderWorker(GraphBuilderWorker)
-        OutboxPublisher(Transactional Outbox Publisher)
+    subgraph "User / CI-CD"
+        A[Initiates Run]
     end
 
-    subgraph "Data & Messaging Infrastructure"
-        BullMQ(BullMQ -- Job Queues)
-        Redis(Redis Cache -- Manifest & Counters)
-        SQLite(SQLite DB -- Staging, Evidence, Outbox)
-        Neo4j(Neo4j -- Final Knowledge Graph)
+    subgraph "Analysis Pipeline"
+        B(EntityScout) -- 1. Creates Jobs & Decomposed Manifest --> C(Message Queue - BullMQ)
+        B -- 2. Writes Decomposed Manifest --> D(Cache - Redis)
+
+        E(Analysis Workers) -- 3. Consume Jobs --> C
+        E -- 4. Read Manifest & File Map --> D
+        E -- 5. Write Findings --> F(Local Outbox - SQLite)
+
+        G(Outbox Publisher Sidecar) -- 6. Polls Local DB --> F
+        G -- 7. Publishes Events --> C
+
+        H(Validation Workers) -- 8. Consume 'analysis-finding' events --> C
+        H -- 9. Atomically INCR counter --> D
+        H -- 10. Persist Evidence --> I(Primary DB - SQLite)
+        H -- 11. Enqueue 'reconcile' job if ready --> C
+
+        J(Reconciliation Worker) -- 12. Consumes 'reconcile-relationship' job --> C
+        J -- 13. Reads Evidence --> I
+        J -- 14. Writes Validated Relationships --> I
+
+        K(GraphBuilderWorker) -- 15. Consumes 'run-complete' job --> C
+        K -- 16. Reads Validated Data --> I
+        K -- 17. Writes Graph --> L(Graph DB - Neo4j)
     end
 
-    %% Interactions
-    EntityScout -- "1. Creates PAUSED Jobs" --> BullMQ
-    EntityScout -- "2. Writes Manifest" --> Redis
-    EntityScout -- "3. Resumes Queues" --> BullMQ
+    subgraph "Data Stores"
+        C
+        D
+        F
+        I
+        L
+    end
 
-    BullMQ -- "4. Dispatches Jobs" --> FileWorker
-    BullMQ -- "5. Dispatches Jobs" --> DirWorker
-    BullMQ -- "6. Dispatches Jobs" --> GlobalWorker
-
-    FileWorker -- "7. Writes Evidence & Outbox Event" --> SQLite
-    DirWorker -- "8. Writes Evidence & Outbox Event" --> SQLite
-    GlobalWorker -- "9. Writes Evidence & Outbox Event" --> SQLite
-
-    OutboxPublisher -- "10. Reads Outbox" --> SQLite
-    OutboxPublisher -- "11. Publishes Event" --> BullMQ
-
-    BullMQ -- "12. Dispatches Event" --> ValidationWorker
-    ValidationWorker -- "13. Reads Manifest" --> Redis
-    ValidationWorker -- "14. Increments Counter" --> Redis
-    ValidationWorker -- "15. Checks Counter vs. Manifest" --> Redis
-    ValidationWorker -- "16. Enqueues Reconciliation" --> BullMQ
-
-    BullMQ -- "17. Triggers Finalizer Job" --> GraphBuilderWorker
-    GraphBuilderWorker -- "18. Reads Validated Data" --> SQLite
-    GraphBuilderWorker -- "19. Writes Graph" --> Neo4j
+    A --> B
 ```
 
-## 4. Core Workflow (Revised)
+### Component Summary (Revised)
 
-1.  **Initiation--** The `EntityScout` agent is invoked. It performs a shallow scan to identify a candidate set of relationships. It generates the `runManifest`, enqueues all analysis jobs in a **paused** state, saves the manifest to Redis, and finally **resumes** the queues.
-2.  **Parallel Analysis--** The analysis workers consume jobs from BullMQ. Each worker performs its analysis.
-3.  **Atomic Persistence--** In a single transaction, each worker writes its full evidence payload to a `relationship_evidence` table in SQLite and an event message to an `outbox` table.
-4.  **Event Publication--** A separate `TransactionalOutboxPublisher` process polls the `outbox` table, publishes the events to BullMQ, and marks them as sent.
-5.  **Evidence Coordination--** The `ValidationWorker` consumes these events. For each, it atomically increments a counter in Redis (`evidence_count:{runId}:{hash}`).
-6.  **Reconciliation Trigger--** The `ValidationWorker` compares the counter to the expected count from the `runManifest`. If they match, it enqueues a job to reconcile the relationship, which involves reading the full evidence from SQLite.
-7.  **Graph Generation--** The `EntityScout` also creates a final `GraphBuilderWorker` job that depends on all other analysis jobs. Once all analysis is complete, BullMQ automatically enqueues this job. The `GraphBuilderWorker` reads `VALIDATED` data from SQLite to build the final knowledge graph in Neo4j.
+-   **EntityScout--** The entry point. Scans the filesystem, creates jobs, and seeds the **decomposed run manifest** in Redis, including the critical `file_to_job_map`.
+-   **Analysis Workers (`FileAnalysisWorker`, etc.)--** Stateless workers that consume jobs. They use an LLM for analysis, query Redis for manifest data, and write findings to a **local transactional outbox database**.
+-   **TransactionalOutboxPublisher (Sidecar)--** A sidecar process running on each compute node. It polls its **local SQLite database file** and reliably publishes events to the message queue.
+-   **ValidationWorker--** A stateless, scalable worker that consumes `analysis-finding` events. It **persists the evidence payload to a central `relationship_evidence` table** and **atomically increments a counter in Redis**. If the count is met, it enqueues a `reconcile-relationship` job.
+-   **ReconciliationWorker--** A stateless worker that processes `reconcile-relationship` jobs. It fetches all persisted evidence for a relationship, calculates a confidence score, and saves the final validated record to the primary database.
+-   **GraphBuilderWorker--** The final stage. Reads validated relationships from the primary DB and constructs the knowledge graph in Neo4j.
+-   **Message Queue (BullMQ)--** Orchestrates job distribution and event-driven communication.
+-   **Cache (Redis)--** Stores the **decomposed run manifest** using native data types (Hashes, Sets) and atomic counters for evidence tracking.
+-   **Primary DB (SQLite)--** Holds the `outbox` tables (on local nodes), the central `relationship_evidence` table, and the final `relationships` table.
+-   **Graph DB (Neo4j)--** The final destination for the knowledge graph.

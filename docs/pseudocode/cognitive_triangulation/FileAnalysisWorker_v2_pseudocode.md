@@ -1,162 +1,206 @@
-# Pseudocode-- FileAnalysisWorker (v2)
+# Pseudocode-- FileAnalysisWorker (v2 - Transactional Outbox Fix)
 
-This document provides the language-agnostic pseudocode for the `FileAnalysisWorker` v2, which is responsible for the initial analysis of a single source code file. It incorporates a primary LLM-based analysis path and a secondary regex-based fallback for resiliency.
+This document provides detailed, language-agnostic pseudocode for the `FileAnalysisWorker` class, revised to implement the Transactional Outbox Pattern.
 
-## 1. Class-- FileAnalysisWorker
+## 1. Dependencies
 
-### Dependencies
--   `Logger`-- For structured logging.
--   `FileSystem`-- For reading file content.
--   `LlmClient`-- To perform analysis on file content.
--   `HashingService`-- To create unique hashes for relationships.
--   `ConfidenceScoringService`-- To assign initial scores to relationships.
--   `DatabaseClient`-- To store analysis results.
--   `QueueClient`-- To publish completion events.
+- `QueueService`-- An abstraction for the message queue (e.g., BullMQ), used to create the worker instance.
+- `FileSystem`-- An abstraction for reading files.
+- `LlmClient`-- Client to interact with the Language Model.
+- `HashingService`-- Service to create unique hashes for relationships.
+- `ConfidenceScoringService`-- Service to calculate initial confidence scores.
+- `DatabaseService`-- An abstraction for the SQLite database, supporting transactions.
+- `Logger`-- For structured logging.
 
----
-
-### 2. Method-- `processJob`
-
-**Purpose**-- Orchestrates the analysis of a single file as dictated by a job from the queue. It handles both successful LLM analysis and failures that trigger a fallback mechanism.
-
-**INPUT**-- `job` (Object)-- Contains `runId` and `filePath`.
+## 2. Class Definition
 
 ```pseudocode
-FUNCTION processJob(job)
-    // TEST-- processJob correctly extracts job data and initiates logging.
-    LOG "Starting file analysis for job:", job.id, "File:", job.data.filePath
+CLASS FileAnalysisWorker
 
-    DECLARE runId = job.data.runId
-    DECLARE filePath = job.data.filePath
-    DECLARE fileContent, analysisResult
-    DECLARE isFallback = FALSE
+  //-- Properties
+  PRIVATE worker
+  PRIVATE queueService
+  PRIVATE fileSystem
+  PRIVATE llmClient
+  PRIVATE hashingService
+  PRIVATE confidenceScoringService
+  PRIVATE databaseService
+  PRIVATE logger
 
-    TRY
-        // 1. Read File Content
-        fileContent = FileSystem.readFile(filePath)
-        // TEST-- processJob throws an error if the file cannot be read.
-    CATCH fileReadError
-        LOG_ERROR "Failed to read file:", filePath, "Error:", fileReadError
-        // Optional-- publish a failure event
-        RETURN // End execution for this job
-    END TRY
-
-    // 2. Attempt LLM Analysis
-    TRY
-        LOG "Attempting LLM analysis for file:", filePath
-        analysisResult = LlmClient.getAnalysis(fileContent)
-        // TEST-- processJob successfully handles a valid LLM response.
-    CATCH llmError
-        LOG_WARNING "LLM analysis failed for file:", filePath, "Error:", llmError
-        LOG "Triggering regex fallback mechanism."
-        
-        // 3. Trigger Best-Effort Fallback
-        // TEST-- processJob triggers regex fallback when LLM client throws an unrecoverable error.
-        analysisResult = this.performRegexFallback(fileContent)
-        isFallback = TRUE
-    END TRY
-
-    // 4. Process POIs and Relationships
-    DECLARE poisToSave = analysisResult.pois
-    DECLARE relationshipsToSave = []
-
-    // TEST-- processJob correctly processes an empty list of relationships.
-    FOR EACH relationship IN analysisResult.relationships
-        // 4a. Create unique hash for the relationship
-        // TEST-- processJob correctly hashes each relationship using the HashingService.
-        DECLARE relationshipHash = HashingService.createRelationshipHash(relationship)
-        
-        // 4b. Get initial confidence score
-        DECLARE initialScore
-        IF isFallback THEN
-            // TEST-- Relationships from fallback are assigned a very low fixed score.
-            initialScore = ConfidenceScoringService.getFixedFallbackScore()
-            relationship.parseStatus = 'UNRELIABLE_PARSE'
-        ELSE
-            initialScore = ConfidenceScoringService.getInitialScoreFromLlm(relationship)
-            relationship.parseStatus = 'SUCCESSFUL_PARSE'
-        END IF
-
-        // 4c. Augment relationship object
-        relationship.hash = relationshipHash
-        relationship.initialScore = initialScore
-        relationship.status = 'PENDING_VALIDATION'
-        relationship.runId = runId
-        
-        ADD relationship TO relationshipsToSave
-    END FOR
-
-    // 5. Save results to the database
-    TRY
-        // TEST-- processJob saves all POIs and scored relationships to the database in a single transaction.
-        DatabaseClient.beginTransaction()
-        DatabaseClient.savePois(poisToSave)
-        DatabaseClient.saveRelationships(relationshipsToSave)
-        DatabaseClient.commitTransaction()
-        LOG "Successfully saved analysis for file:", filePath
-    CATCH dbError
-        LOG_ERROR "Database error saving analysis for file:", filePath, "Error:", dbError
-        DatabaseClient.rollbackTransaction()
-        // Optional-- publish a failure event
-        RETURN // End execution
-    END TRY
-
-    // 6. Publish completion event
-    // TEST-- processJob publishes the 'file-analysis-completed' event with the correct payload.
-    DECLARE eventPayload = {
-        runId: runId,
-        filePath: filePath,
-        status: "completed",
-        source: isFallback ? "regex-fallback" : "llm-analysis"
-    }
-    QueueClient.publish("file-analysis-completed", eventPayload)
-    LOG "Published file-analysis-completed event for:", filePath
-
-END FUNCTION
-```
-
----
-
-### 3. Method-- `performRegexFallback`
-
-**Purpose**-- A fallback mechanism to extract basic Points of Interest (POIs) using regular expressions when the primary LLM analysis fails. It is designed for resiliency, not for deep analysis.
-
-**INPUT**-- `fileContent` (String)-- The raw text content of the file.
-**OUTPUT**-- `Object`-- `{ pois, relationships }`
-
-```pseudocode
-FUNCTION performRegexFallback(fileContent)
-    LOG "Executing performRegexFallback."
-    DECLARE pois = []
+  //--------------------------------------------------------------------------
+  //-- Constructor
+  //--------------------------------------------------------------------------
+  FUNCTION constructor(queueName, services)
+    //-- TEST-- 'Constructor should initialize all required services'
+    //-- TEST-- 'Constructor should bind processJob to the worker'
     
-    // 1. Apply a series of predefined regex patterns
-    // Example patterns-- could be stored in a configuration file
-    DECLARE regexPatterns = [
-        { type: "FunctionDefinition", pattern: /function\s+(\w+)/g },
-        { type: "ClassDeclaration", pattern: /class\s+(\w+)/g },
-        { type: "VariableDeclaration", pattern: /const\s+(\w+)/g }
-        // ... add more patterns for different languages/constructs
-    ]
+    //-- Assign injected services
+    this.queueService = services.queueService
+    this.fileSystem = services.fileSystem
+    this.llmClient = services.llmClient
+    this.hashingService = services.hashingService
+    this.confidenceScoringService = services.confidenceScoringService
+    this.databaseService = services.databaseService
+    this.logger = services.logger
 
-    // TEST-- performRegexFallback extracts POIs for a known file type (e.g., JavaScript).
-    FOR EACH item IN regexPatterns
-        DECLARE matches = fileContent.matchAll(item.pattern)
-        FOR EACH match IN matches
-            DECLARE poi = {
-                name: match[1],
-                type: item.type,
-                sourceFile: "self" // Placeholder, actual path is known in processJob
-            }
-            ADD poi TO pois
-        END FOR
-    END FOR
+    //-- Initialize the worker to listen on the specified queue
+    //-- The `processJob` function is bound to the current instance context
+    this.worker = this.queueService.createWorker(queueName, this.processJob.bind(this))
 
-    LOG "Found", pois.length, "POIs via regex fallback."
+    this.logger.info("FileAnalysisWorker initialized and listening on queue-- " + queueName)
+  ENDFUNCTION
 
-    // 2. Return structure similar to LLM, but with no relationships
-    // TEST-- performRegexFallback returns an empty relationship array.
-    RETURN {
-        pois: pois,
-        relationships: [] 
-    }
-END FUNCTION
+  //--------------------------------------------------------------------------
+  //-- Main Job Processing Logic
+  //--------------------------------------------------------------------------
+  ASYNC FUNCTION processJob(job)
+    //-- INPUT-- job (Object)-- Contains job.id and job.data { runId, filePath }
+    //-- OUTPUT-- None. Side effects are atomic DB writes (evidence + outbox event).
+
+    //-- Extract data from the job payload
+    CONSTANT runId = job.data.runId
+    CONSTANT filePath = job.data.filePath
+    this.logger.info("Starting analysis for file-- " + filePath + " with runId-- " + runId)
+
+    CONSTANT fileContent = this.fileSystem.readFile(filePath)
+    
+    //-- Handle case where file is unreadable or empty
+    IF fileContent IS NULL OR EMPTY THEN
+      this.logger.error("Could not read or file is empty-- " + filePath)
+      RETURN
+    ENDIF
+
+    VARIABLE analysisResult
+
+    TRY
+      //-- TEST-- 'If LLM parsing succeeds, it should return POIs and relationships'
+      analysisResult = this.llmClient.analyzeFile(fileContent)
+      analysisResult.isFallback = FALSE
+    CATCH LlmError as error
+      //-- TEST-- 'If LLM parsing fails, FileAnalysisWorker should trigger the regex fallback'
+      this.logger.warn("LLM analysis failed for " + filePath + ". Falling back to regex. Error-- " + error.message)
+      analysisResult = this.performRegexFallback(fileContent)
+      analysisResult.isFallback = TRUE
+    ENDTRY
+
+    //-- Process the results, whether from LLM or fallback
+    CONSTANT pois = analysisResult.pois
+    CONSTANT relationshipsToProcess = analysisResult.relationships
+    CONSTANT processedRelationships = CREATE_LIST()
+
+    //-- TEST-- 'FileAnalysisWorker should process each relationship found'
+    FOR EACH rel IN relationshipsToProcess
+      VARIABLE initialScore
+      VARIABLE parseStatus
+
+      IF analysisResult.isFallback IS TRUE THEN
+        //-- TEST-- 'Relationships from the fallback should have a low confidence score and an UNRELIABLE_PARSE status'
+        initialScore = 0.05 //-- Fixed low score for unreliable data
+        parseStatus = 'UNRELIABLE_PARSE'
+      ELSE
+        //-- TEST-- 'FileAnalysisWorker should call ConfidenceScoringService for each found relationship'
+        initialScore = this.confidenceScoringService.getInitialScoreFromLlm(rel, { filePath: filePath })
+        parseStatus = 'LLM_SUCCESS'
+      ENDIF
+
+      //-- Create a new relationship object with additional metadata
+      CONSTANT processedRel = {
+        ...rel,
+        runId: runId,
+        confidenceScore: initialScore,
+        status: 'PENDING_VALIDATION',
+        parseStatus: parseStatus
+      }
+      
+      ADD processedRel TO processedRelationships
+    ENDFOR
+
+    //-- Prepare evidence findings from processed relationships
+    CONSTANT findings = CREATE_LIST()
+    FOR EACH rel IN processedRelationships
+      //-- TEST-- 'FileAnalysisWorker should use the official HashingService to create relationship hashes'
+      CONSTANT relationshipHash = this.hashingService.createRelationshipHash(rel.source, rel.target, rel.type)
+      ADD {
+        relationshipHash: relationshipHash,
+        foundRelationship: TRUE,
+        initialScore: rel.confidenceScore,
+        status: rel.parseStatus
+      } TO findings
+    ENDFOR
+
+    //-- Persist results and create outbox event within a single transaction
+    //-- TEST-- 'All database writes (POIs, relationships, evidence, outbox) should be in a single transaction'
+    TRY
+        this.databaseService.beginTransaction()
+
+        //-- Save POIs, Relationships, and Evidence
+        this.databaseService.savePois(pois)
+        this.databaseService.saveRelationships(processedRelationships)
+        this.databaseService.saveEvidenceBatch({
+            runId: runId,
+            jobId: job.id,
+            sourceWorker: 'FileAnalysisWorker',
+            findings: findings
+        })
+        this.logger.info("Saved " + pois.length + " POIs and " + processedRelationships.length + " relationships/evidence for " + filePath)
+
+        //-- Prepare and save the lightweight outbox event
+        CONSTANT outboxPayload = {
+          runId: runId,
+          jobId: job.id,
+          sourceWorker: 'FileAnalysisWorker',
+          findingsCount: findings.length
+        }
+        CONSTANT outboxEvent = {
+            eventName: 'file-analysis-completed',
+            payload: outboxPayload
+        }
+        
+        //-- TEST-- 'processJob should write a "file-analysis-completed" event to the outbox table'
+        //-- TEST-- 'processJob should NOT call the queue service directly'
+        this.databaseService.insertIntoOutbox(outboxEvent)
+        this.logger.info("Saved 'file-analysis-completed' event to outbox for " + filePath)
+
+        //-- TEST-- 'The transaction should commit successfully on valid data'
+        this.databaseService.commitTransaction()
+    CATCH DbError as dbError
+        //-- TEST-- 'The transaction should roll back on any database error'
+        this.logger.error("Database transaction failed for " + filePath + ". Rolling back. Error-- " + dbError.message)
+        this.databaseService.rollbackTransaction()
+        THROW dbError //-- Re-throw to let the job fail
+    ENDTRY
+
+  ENDFUNCTION
+
+  //--------------------------------------------------------------------------
+  //-- Regex Fallback Logic
+  //--------------------------------------------------------------------------
+  FUNCTION performRegexFallback(fileContent)
+    //-- INPUT-- fileContent (String)-- The raw content of the file.
+    //-- OUTPUT-- Object { pois, relationships }
+
+    this.logger.info("Executing regex fallback.")
+    CONSTANT pois = CREATE_LIST()
+    
+    //-- Example-- Define a regex to find simple function declarations in JavaScript
+    CONSTANT functionRegex = /function\s+([a-zA-Z0-9_]+)\s*\(/g
+    
+    VARIABLE match
+    WHILE (match = functionRegex.exec(fileContent)) IS NOT NULL
+      CONSTANT poiName = match[1]
+      CONSTANT newPoi = {
+        name: poiName,
+        type: 'Function',
+        qualifiedName: 'REGEX_FALLBACK::' + poiName, 
+        sourceFile: 'TBD' //-- filePath would be added in the main flow
+      }
+      ADD newPoi TO pois
+    ENDWHILE
+
+    this.logger.info("Regex fallback found " + pois.length + " potential POIs.")
+    
+    //-- This method does not attempt to find relationships, as it's unreliable
+    RETURN { pois: pois, relationships: [] }
+  ENDFUNCTION
+
+ENDCLASS

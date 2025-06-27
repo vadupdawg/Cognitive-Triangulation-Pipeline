@@ -1,145 +1,200 @@
-# Pseudocode-- GlobalResolutionWorker (v2)
+# Pseudocode-- GlobalResolutionWorker (v2 - Transactional Outbox Fix)
 
-This document outlines the detailed, language-agnostic pseudocode for the `GlobalResolutionWorker` class, specifically its `processJob` method. It is based on the v2 specification for the Cognitive Triangulation architecture.
+This document provides a detailed, language-agnostic pseudocode blueprint for the `GlobalResolutionWorker` class, revised to implement the Transactional Outbox Pattern.
 
-## 1. Class-- GlobalResolutionWorker
+## 1. Overview
 
-### Dependencies
-- `logger`-- For structured logging.
-- `sqliteDb`-- To access the database for directory summaries.
-- `llmClient`-- An abstraction for the Large Language Model client.
-- `ConfidenceScoringService`-- To calculate initial confidence scores.
-- `queueManager`-- To publish completion events.
+The `GlobalResolutionWorker` is responsible for the final, global analysis pass over the entire codebase for a given run. It aggregates directory-level summaries to build a high-level context, asks an LLM to identify cross-directory relationships, and evaluates relationships found in previous, lower-level passes. Its findings are saved to the database, and a completion event is written to the outbox table within a single transaction.
 
-### Class Structure
+## 2. Dependencies
+
+- **DatabaseService**: An interface to a database (e.g., `sqliteDb`) supporting transactions.
+- **QueueService**: An interface to a message queue (e.g., `bullmq`) to create the worker instance.
+- **LlmClient**: A client to interact with a Large Language Model.
+- **ConfidenceScoringService**: A service to calculate confidence scores for relationships.
+- **HashingService**: A service for creating consistent hashes.
+- **Logger**: A service for structured logging.
+
+## 3. Class-- GlobalResolutionWorker
+
+### 3.1. Class Structure
+
 ```pseudocode
 CLASS GlobalResolutionWorker
-    -- Dependencies are injected during instantiation
-    CONSTRUCTOR(logger, sqliteDb, llmClient, ConfidenceScoringService, queueManager)
-        this.logger = logger
-        this.sqliteDb = sqliteDb
-        this.llmClient = llmClient
-        this.ConfidenceScoringService = ConfidenceScoringService
-        this.queueManager = queueManager
-    END CONSTRUCTOR
 
-    -- Main method to process jobs
-    FUNCTION processJob(job)
-        -- See detailed pseudocode below
+    // Properties
+    PRIVATE worker
+    PRIVATE queueService
+    PRIVATE dbService
+    PRIVATE llmClient
+    PRIVATE scoringService
+    PRIVATE hashingService
+    PRIVATE logger
+
+    // Constructor
+    FUNCTION constructor(queueName, services)
+        this.queueService = services.queueService
+        this.dbService = services.databaseService
+        this.llmClient = services.llmClient
+        this.scoringService = services.confidenceScoringService
+        this.hashingService = services.hashingService
+        this.logger = services.logger
+
+        // The worker listens to a specific queue and binds processJob to handle messages
+        this.worker = this.queueService.createWorker(queueName, this.processJob.bind(this))
+        this.logger.info("GlobalResolutionWorker initialized and listening on queue--" + queueName)
+    END FUNCTION
+
+    // Main processing method
+    ASYNC FUNCTION processJob(job)
+        // ... detailed logic below ...
+    END FUNCTION
+
+    // Helper function for building LLM context
+    FUNCTION buildLlmContext(directorySummaries)
+        // ... detailed logic below ...
     END FUNCTION
 
 END CLASS
 ```
 
-## 2. Function-- processJob
+### 3.2. Method-- `processJob`
 
-This function orchestrates the global analysis of the entire codebase for a given run.
-
-### 2.1. Signature
-- **INPUT**: `job` (Object)-- A job object containing `runId`.
-- **OUTPUT**: None (The function is asynchronous and signals completion via an event).
-
-### 2.2. Pseudocode
+This is the primary method that executes the global analysis logic.
 
 ```pseudocode
-FUNCTION processJob(job)
-    -- TDD Anchor-- TEST that a job with null or invalid data is handled gracefully.
-    CONSTANT runId = job.data.runId
-    CONSTANT workerName = "GlobalResolutionWorker"
-
-    this.logger.info(`Starting global resolution for runId-- ${runId}`)
-
+// TEST-- 'GlobalResolutionWorker should successfully process a valid job'
+// TEST-- 'GlobalResolutionWorker should handle jobs with no directory summaries gracefully'
+// TEST-- 'GlobalResolutionWorker should log an error if the job processing fails'
+ASYNC FUNCTION processJob(job)
     TRY
-        -- 1. Fetch all directory summaries from the database
-        -- TDD Anchor-- TEST that the database is queried with the correct runId.
-        CONSTANT directorySummaries = this.sqliteDb.getAllDirectorySummaries(runId)
+        // 1. Initialization
+        this.logger.info("Starting GlobalResolutionWorker job for runId--" + job.data.runId)
+        CONSTANT runId = job.data.runId
+        CONSTANT jobId = job.id
+        CONSTANT findings = [] // An array to hold all findings from this pass
 
-        -- TDD Anchor-- TEST behavior when no directory summaries are found for the runId.
+        // 2. Fetch Data
+        // TEST-- 'GlobalResolutionWorker should fetch all directory summaries for the run'
+        CONSTANT directorySummaries = this.dbService.getDirectorySummaries(runId)
+
         IF directorySummaries IS EMPTY THEN
-            this.logger.warn(`No directory summaries found for runId-- ${runId}. Nothing to process.`)
-            -- Potentially publish a "completed-empty" event or simply return.
-            RETURN
+            this.logger.warn("No directory summaries found for runId--" + runId + ". Aborting global analysis.")
+            RETURN // Exit early
         END IF
 
-        -- 2. Construct the high-level context for the LLM
-        -- TDD Anchor-- TEST that the context string is formatted correctly from a sample list of summaries.
-        CONSTANT globalContext = this.buildGlobalContext(directorySummaries)
+        // TEST-- 'GlobalResolutionWorker should fetch all relationships from lower-level passes'
+        CONSTANT relationshipsToEvaluate = this.dbService.getAllRelationshipsForRun(runId)
 
-        -- 3. Call the LLM to identify cross-directory relationships and evaluate findings
-        -- TDD Anchor-- TEST that the LLM is called with the correctly formatted prompt and context.
-        CONSTANT llmPrompt = "Analyze the following directory summaries to identify high-level, cross-directory relationships and architectural patterns. Provide a definitive analysis."
-        CONSTANT llmResponse = this.llmClient.analyzeGlobalContext(llmPrompt, globalContext)
+        // 3. LLM Context Construction & Analysis
+        CONSTANT llmContext = this.buildLlmContext(directorySummaries)
+        CONSTANT llmResponse = this.llmClient.analyzeGlobally(llmContext, relationshipsToEvaluate)
+        CONSTANT relationshipsFoundByLlm = llmResponse.relationships // New relationships identified
+        CONSTANT llmEvaluations = llmResponse.evaluations // Opinions on existing relationships
 
-        -- TDD Anchor-- TEST the parsing logic for a valid, complex LLM response containing multiple findings.
-        -- TDD Anchor-- TEST the handling of an empty or malformed LLM response.
-        CONSTANT llmFindings = this.parseLlmResponse(llmResponse)
-
-        -- 4. & 5. Process each finding from the LLM
-        CONSTANT finalFindings = []
-        FOR EACH finding IN llmFindings
-            -- A "finding" can be a newly identified relationship or an opinion on an existing one.
-            -- The LLM is expected to provide enough detail to differentiate.
-            
-            -- For new relationships identified in this global pass
-            IF finding.isNewRelationship THEN
-                -- TDD Anchor-- TEST that the scoring service is called for each newly identified relationship.
-                CONSTANT initialScore = this.ConfidenceScoringService.getInitialScoreFromLlm(finding.details)
-                
-                -- Create a structured finding object for the event
-                CONSTANT newFinding = {
-                    type-- "NEW_GLOBAL_RELATIONSHIP",
-                    source-- workerName,
-                    details-- finding.details,
-                    initialScore-- initialScore
+        // 4. Evaluate Relationships from Lower-Level Passes
+        // TEST-- 'GlobalResolutionWorker should create a "finding" for each relationship it evaluates'
+        FOR EACH existingRel IN relationshipsToEvaluate
+            CONSTANT evaluation = llmEvaluations.find(e -> e.hash == existingRel.hash)
+            IF evaluation IS NOT NULL THEN
+                CONSTANT finding = {
+                    relationshipHash: existingRel.hash,
+                    foundInPass: evaluation.isConfirmed,
+                    pass: 'global',
+                    score: this.scoringService.getScoreFromLlmEvaluation(evaluation),
+                    rawLlmOutput: evaluation.reasoning
                 }
-                finalFindings.push(newFinding)
-            ELSE -- For opinions on relationships from lower-level passes
-                -- TDD Anchor-- TEST that opinions on existing relationships are correctly structured.
-                CONSTANT opinionFinding = {
-                    type-- "OPINION",
-                    source-- workerName,
-                    targetRelationshipId-- finding.relationshipId, -- ID of the relationship being evaluated
-                    opinion-- finding.opinion, -- e.g., "CONFIRMED", "REJECTED", "MODIFIED"
-                    confidence-- finding.confidence
-                }
-                finalFindings.push(opinionFinding)
+                findings.push(finding)
             END IF
-        END FOR
+        ENDFOR
 
-        -- 6. Construct the event payload
-        -- TDD Anchor-- TEST that the final event payload is structured correctly with all findings.
-        CONSTANT eventPayload = {
-            runId-- runId,
-            source-- workerName,
-            findings-- finalFindings
-        }
+        // 5. Process Newly Identified Relationships
+        // TEST-- 'GlobalResolutionWorker should create a "finding" for each new cross-directory relationship'
+        FOR EACH newRel IN relationshipsFoundByLlm
+            CONSTANT newRelHash = this.hashingService.createRelationshipHash(newRel)
+            CONSTANT finding = {
+                relationshipHash: newRelHash,
+                foundInPass: TRUE,
+                pass: 'global',
+                score: this.scoringService.getInitialScoreFromLlm(newRel.raw),
+                rawLlmOutput: newRel.raw,
+                relationshipData: newRel // Include data for potential insertion
+            }
+            findings.push(finding)
+        ENDFOR
+        
+        // 6. Persist results and create outbox event within a single transaction
+        // TEST-- 'All database writes (evidence, new relationships, outbox) should be in a single transaction'
+        TRY
+            this.dbService.beginTransaction()
 
-        -- 7. Publish the completion event
-        -- TDD Anchor-- TEST that the queueManager is called to publish the event with the correct name and payload.
-        this.queueManager.publishEvent("global-analysis-completed", eventPayload)
+            // 6a. Write the full evidence payload to the database
+            CONSTANT evidencePayload = {
+                runId: runId,
+                jobId: jobId,
+                sourceWorker: 'GlobalResolutionWorker',
+                findings: findings
+            }
+            this.dbService.saveEvidenceBatch(evidencePayload)
+            
+            // 6b. Save any newly discovered relationships
+            this.dbService.saveNewRelationshipsFromGlobalPass(findings)
 
-        this.logger.info(`Successfully completed global resolution for runId-- ${runId}`)
+            this.logger.info("Saved " + findings.length + " evidence findings for job " + jobId)
+
+            // 6c. Write the lightweight event notification to the outbox
+            CONSTANT outboxPayload = {
+              runId: runId,
+              jobId: jobId,
+              sourceWorker: 'GlobalResolutionWorker',
+              findingsCount: findings.length
+            }
+            CONSTANT outboxEvent = {
+              eventName: 'global-analysis-completed',
+              payload: outboxPayload
+            }
+
+            // TEST-- 'processJob should write a "global-analysis-completed" event to the outbox table'
+            // TEST-- 'processJob should NOT call the queue service directly'
+            this.dbService.insertIntoOutbox(outboxEvent)
+            this.logger.info("Saved 'global-analysis-completed' event to outbox for job " + jobId)
+            
+            // TEST-- 'The transaction should commit successfully on valid data'
+            this.dbService.commitTransaction()
+        CATCH DbError as dbError
+            // TEST-- 'The transaction should roll back on any database error'
+            this.logger.error("Database transaction failed for job " + jobId + ". Rolling back. Error-- " + dbError.message)
+            this.dbService.rollbackTransaction()
+            THROW dbError
+        ENDTRY
+        
+        this.logger.info("GlobalResolutionWorker job completed for runId--" + runId)
+        RETURN
 
     CATCH error
-        -- TDD Anchor-- TEST that any exception during the process is caught, logged, and does not crash the worker.
-        this.logger.error(`Error in GlobalResolutionWorker for runId-- ${runId}-- ${error.message}`)
-        -- Optionally, publish a failure event
-        this.queueManager.publishEvent("global-analysis-failed", { runId-- runId, error-- error.message })
+        this.logger.error("Error processing job in GlobalResolutionWorker for runId--" + job.data.runId, error)
+        THROW error
     END TRY
 END FUNCTION
 ```
 
-### 2.3. Helper Function-- `buildGlobalContext` (Conceptual)
+### 3.3. Helper Method-- `buildLlmContext`
 
 ```pseudocode
-FUNCTION buildGlobalContext(summaries)
-    -- This function concatenates directory summaries into a single string.
-    -- It adds separators to make it easily parsable by the LLM.
+FUNCTION buildLlmContext(directorySummaries)
+    CONSTANT context = "You are a senior software architect. Your task is to analyze the following directory summaries from a codebase to identify high-level, cross-directory relationships and architectural patterns. Focus on interactions *between* these directories."
     
-    CONSTANT contextParts = []
-    FOR EACH summary IN summaries
-        contextParts.push(`--- DIRECTORY-- ${summary.directoryPath} ---\n${summary.summaryText}\n`)
-    END FOR
-    
-    RETURN contextParts.join("\n")
+    context += "\n\n== DIRECTORY SUMMARIES ==\n"
+
+    FOR EACH summary IN directorySummaries
+        context += "\n--- DIRECTORY: " + summary.directoryPath + " ---\n"
+        context += summary.summaryText + "\n"
+    ENDFOR
+
+    context += "\n\n== TASK ==\n"
+    context += "1. Identify and describe any relationships (e.g., 'uses', 'calls', 'depends_on', 'inherits_from') between entities in DIFFERENT directories.\n"
+    context += "2. Re-evaluate the provided list of existing relationships based on this global context. For each one, state if you confirm it and provide a brief reasoning.\n"
+    context += "3. Format your response as a JSON object with two keys: 'newRelationships' and 'evaluatedRelationships'."
+
+    RETURN context
 END FUNCTION
