@@ -8,16 +8,20 @@ const EntityScout = require('../../../src/agents/EntityScout');
 const FileAnalysisWorker = require('../../../src/workers/fileAnalysisWorker');
 const DirectoryAggregationWorker = require('../../../src/workers/directoryAggregationWorker');
 const GlobalResolutionWorker = require('../../../src/workers/globalResolutionWorker');
-const ValidationWorker = require('../../../src/workers/validationWorker');
+const RelationshipResolutionWorker = require('../../../src/workers/relationshipResolutionWorker');
+const ValidationWorker = require('../../../src/workers/ValidationWorker');
 const GraphBuilderWorker = require('../../../src/agents/GraphBuilder');
 const QueueManager = require('../../../src/utils/queueManager');
 const { DatabaseManager } = require('../../../src/utils/sqliteDb');
+const { DeepSeekClient } = require('../../../src/utils/deepseekClient');
+const TransactionalOutboxPublisher = require('../../../src/services/TransactionalOutboxPublisher');
+
 const { NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, REDIS_CONFIG, SQLITE_DB_PATH } = global.config;
 
 jest.mock('../../../src/utils/logger');
-jest.setTimeout(30000); // 30-second timeout for this E2E test
+jest.setTimeout(150000);
 
-describe('End-to-End Pipeline Test', () => {
+describe('End-to-End Pipeline Test with Data Integrity Checks', () => {
     let testRootDir;
     let queueManager;
     let driver;
@@ -25,6 +29,7 @@ describe('End-to-End Pipeline Test', () => {
     let redisClient;
     let dbManager;
     let workers = [];
+    let publisher;
     let runId;
 
     beforeAll(async () => {
@@ -36,36 +41,40 @@ describe('End-to-End Pipeline Test', () => {
 
     beforeEach(async () => {
         runId = uuidv4();
-        const uniqueId = uuidv4();
-        testRootDir = path.join(os.tmpdir(), `e2e-test-${uniqueId}`);
-        await fs.ensureDir(testRootDir);
+        testRootDir = path.resolve(__dirname, '../../../polyglot-test');
         
         session = driver.session();
         await session.run('MATCH (n) DETACH DELETE n');
         await redisClient.flushall();
+        dbManager.rebuildDb();
         await queueManager.clearAllQueues();
-        dbManager.initializeDb();
 
-        // Mock external dependencies
-        const mockLlmClient = { query: jest.fn().mockResolvedValue(JSON.stringify({ relationships: [], pois: [] })) };
+        const llmClient = new DeepSeekClient();
         
-        // Start all workers with their dependencies
-        workers.push(new FileAnalysisWorker(queueManager, dbManager, redisClient, mockLlmClient));
+        workers.push(new FileAnalysisWorker(queueManager, dbManager, redisClient, llmClient));
         workers.push(new DirectoryAggregationWorker(queueManager, redisClient));
-        workers.push(new GlobalResolutionWorker(queueManager, mockLlmClient, dbManager));
+        workers.push(new RelationshipResolutionWorker(queueManager, dbManager, llmClient));
+        workers.push(new GlobalResolutionWorker(queueManager, llmClient, dbManager));
         workers.push(new ValidationWorker(queueManager, dbManager, redisClient));
         workers.push(new GraphBuilderWorker(queueManager, driver));
+
+        publisher = new TransactionalOutboxPublisher(dbManager, queueManager);
+        publisher.start();
     });
 
     afterEach(async () => {
-        await fs.remove(testRootDir);
+        if (publisher) {
+            await publisher.stop();
+        }
         for (const worker of workers) {
             if (worker.worker) {
                 await worker.worker.close();
             }
         }
         workers = [];
-        await session.close();
+        if (session) {
+            await session.close();
+        }
     });
 
     afterAll(async () => {
@@ -75,42 +84,92 @@ describe('End-to-End Pipeline Test', () => {
         dbManager.close();
     });
 
-    // Test Case E2E-01
-    test('E2E-01: Should process files from discovery to graph persistence', async () => {
-        // 1. Setup test files
-        const appDir = path.join(testRootDir, 'app');
-        const apiDir = path.join(testRootDir, 'api');
-        await fs.ensureDir(appDir);
-        await fs.ensureDir(apiDir);
-        await fs.writeFile(path.join(appDir, 'service.js'), 'function calculateTax() { return 1; }');
-        await fs.writeFile(path.join(apiDir, 'handler.js'), 'const tax = calculateTax();');
-
-        // 2. Run EntityScout
+    test('E2E-03: Should run against polyglot-test and validate data integrity', async () => {
         const entityScout = new EntityScout(queueManager, redisClient, testRootDir, runId);
         await entityScout.run();
 
-        // 3. Poll for completion
-        await pollForCompletion(async () => {
-            const result = await session.run(
-                `MATCH (f:File)-[:DEFINES]->(func:Function {name: 'calculateTax'})
-                 RETURN f, func`
-            );
-            return result.records.length > 0;
-        }, 20000, 1000);
+        // Wait for the entire pipeline to finish
+        const allQueues = [
+            'file-analysis-queue',
+            'relationship-resolution-queue',
+            'analysis-findings-queue',
+            'global-resolution-queue',
+            'reconciliation-queue'
+        ];
+        await waitForQueuesDrained(queueManager, allQueues, 2400000); // 40 minute timeout
 
+        // --- Data Integrity Assertions ---
 
-        // 4. Verify final state in Neo4j
-        const result = await session.run(
-            `MATCH (source:File)-[r:CALLS]->(target:Function)
-             WHERE source.id ENDS WITH 'handler.js' AND target.name = 'calculateTax'
-             RETURN r`
+        // --- Comprehensive State-of-the-World Assertions ---
+
+        // 1. Assert SQLite State: All outbox events are published
+        const db = dbManager.getDb();
+        const pendingOrFailedEvents = db.prepare("SELECT COUNT(*) as count FROM outbox WHERE run_id = ? AND status != 'PUBLISHED'").get(runId);
+        expect(pendingOrFailedEvents.count).toBe(0);
+
+        const pythonEvent = db.prepare("SELECT * FROM outbox WHERE run_id = ? AND payload LIKE '%database_client.py%' AND event_type = 'file-analysis-finding'").get(runId);
+        expect(pythonEvent).toBeDefined();
+
+        // 2. Assert Redis State: No failed jobs
+        const failedJobsQueue = queueManager.getQueue('failed-jobs');
+        const failedJobCount = await failedJobsQueue.getJobCount();
+        if (failedJobCount > 0) {
+            const failedJobs = await failedJobsQueue.getJobs(['active', 'wait', 'completed'], 0, failedJobCount);
+            console.error('Failed jobs found:', JSON.stringify(failedJobs, null, 2));
+        }
+        expect(failedJobCount).toBe(0);
+        const relationshipQueue = queueManager.getQueue('relationship-resolution-queue');
+        const completedJobs = await relationshipQueue.getCompleted();
+        const pythonJob = completedJobs.find(j => j.data.filePath.includes('database_client.py'));
+        expect(pythonJob).toBeDefined();
+
+        // 3. Assert Neo4j State: Graph is correctly formed
+        const graphStats = await session.run(
+            `MATCH (n) WHERE n.run_id = $runId
+             WITH count(DISTINCT n) AS nodes
+             MATCH ()-[r]-() WHERE r.run_id = $runId
+             RETURN nodes, count(DISTINCT r) AS relationships`,
+            { runId }
         );
-        
-        expect(result.records).toHaveLength(1);
-    });
+        expect(graphStats.records[0].get('nodes')).toBeGreaterThan(20);
+        expect(graphStats.records[0].get('relationships')).toBeGreaterThan(10);
+
+        const specificRelationship = await session.run(
+            `MATCH (pyClass:Class {name: 'DatabaseClient'})-[r:CALLS]->(pyFunc:Function {name: 'process_data'})
+             WHERE pyClass.run_id = $runId AND pyFunc.run_id = $runId
+             RETURN r`,
+            { runId }
+        );
+        expect(specificRelationship.records.length).toBeGreaterThan(0);
+    }, 3000000); // 50 minute test timeout
 });
 
-async function pollForCompletion(conditionFn, timeout, interval) {
+async function waitForQueuesDrained(queueManager, queueNames, timeout = 2400000, interval = 1000) { // Default to 40 minutes
+    const startTime = Date.now();
+    console.log(`[TestUtil] Waiting for queues to drain: ${queueNames.join(', ')}`);
+
+    while (Date.now() - startTime < timeout) {
+        const jobCounts = await Promise.all(
+            queueNames.map(name => queueManager.getQueue(name).getJobCounts('wait', 'active', 'delayed'))
+        );
+
+        const allQueuesEmpty = jobCounts.every(counts =>
+            counts.wait === 0 && counts.active === 0 && counts.delayed === 0
+        );
+
+        if (allQueuesEmpty) {
+            console.log(`[TestUtil] All specified queues are drained.`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, interval));
+    }
+
+    throw new Error(`[TestUtil] Timed out waiting for queues to drain: ${queueNames.join(', ')}`);
+}
+
+async function waitForCondition(conditionFn, timeout = 10000, interval = 500) {
     const startTime = Date.now();
     while (Date.now() - startTime < timeout) {
         if (await conditionFn()) {
@@ -118,5 +177,5 @@ async function pollForCompletion(conditionFn, timeout, interval) {
         }
         await new Promise(resolve => setTimeout(resolve, interval));
     }
-    throw new Error('Polling timed out');
+    throw new Error(`[TestUtil] Timed out waiting for condition to be met.`);
 }

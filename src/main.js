@@ -67,18 +67,18 @@ class CognitiveTriangulationPipeline {
 
             this.metrics.endTime = new Date();
             await this.printFinalReport();
+await this.printFinalReport();
 
-        } catch (error) {
-            console.error('❌ [main.js] Critical error in pipeline execution:', error);
-            throw error;
-        } finally {
-            await this.close();
-        }
-    }
+} catch (error) {
+console.error('❌ [main.js] Critical error in pipeline execution:', error);
+throw error;
+} finally {
+await this.close();
+}
+}
 
-    startWorkers() {
-        // Note: In a real distributed system, these would run in separate processes.
-        // For this simulation, we run them in the same process.
+startWorkers() {
+// Note: In a real distributed system, these would run in separate processes.
         new FileAnalysisWorker(this.queueManager, this.dbManager, this.cacheClient, this.llmClient);
         new DirectoryResolutionWorker(this.queueManager, this.dbManager, this.cacheClient, this.llmClient);
         new DirectoryAggregationWorker(this.queueManager, this.cacheClient);

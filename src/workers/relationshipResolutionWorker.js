@@ -8,22 +8,27 @@ class RelationshipResolutionWorker {
         this.llmClient = llmClient;
         this.worker = new Worker('relationship-resolution-queue', this.process.bind(this), {
             connection: this.queueManager.connectionOptions,
-            concurrency: 5 // Can handle more of these jobs concurrently
+            concurrency: 2 // Reduced concurrency to avoid overwhelming the API
         });
     }
 
     async process(job) {
-        const { filePath, pois, runId, jobId } = job.data;
-        console.log(`[RelationshipResolutionWorker] Processing job ${job.id} for file: ${filePath}`, { data: job.data });
+        const { filePath, primaryPoi, contextualPois, runId, jobId } = job.data;
+        console.log(`[RelationshipResolutionWorker] Processing job ${job.id} for POI: ${primaryPoi.id} in file: ${filePath}`);
+
+        if (!primaryPoi || !contextualPois) {
+            console.log(`[RelationshipResolutionWorker] Skipping job ${job.id}, missing primary or contextual POIs.`);
+            return;
+        }
 
         try {
-            if (!pois || pois.length < 2) {
-                console.log(`[RelationshipResolutionWorker] Skipping ${filePath}, not enough POIs for relationship analysis.`);
-                return;
-            }
-
-            const prompt = this.constructPrompt(filePath, pois);
+            console.log(`[RelationshipResolutionWorker] Constructing prompt for ${filePath} POI ${primaryPoi.id}`);
+            const prompt = this.constructPrompt(filePath, primaryPoi, contextualPois);
+            
+            console.log(`[RelationshipResolutionWorker] Querying LLM for ${filePath} POI ${primaryPoi.id}`);
             const llmResponse = await this.llmClient.query(prompt);
+
+            console.log(`[RelationshipResolutionWorker] Parsing LLM response for ${filePath} POI ${primaryPoi.id}`);
             const relationships = this.parseResponse(llmResponse);
 
             if (relationships.length > 0) {
@@ -35,44 +40,48 @@ class RelationshipResolutionWorker {
                     filePath: filePath,
                     relationships: relationships,
                 };
-
                 const db = this.dbManager.getDb();
-                const stmt = db.prepare(
-                    'INSERT INTO outbox (event_type, payload, status) VALUES (?, ?, ?)'
-                );
-                stmt.run(findingPayload.type, JSON.stringify(findingPayload), 'PENDING');
-                console.log(`[RelationshipResolutionWorker] Wrote ${relationships.length} relationships for ${filePath} to outbox.`);
+                db.prepare('INSERT INTO outbox (event_type, payload, status) VALUES (?, ?, ?)')
+                  .run(findingPayload.type, JSON.stringify(findingPayload), 'PENDING');
+                console.log(`[RelationshipResolutionWorker] Wrote ${relationships.length} relationships for POI ${primaryPoi.id} to outbox.`);
             }
         } catch (error) {
-            console.error(`[RelationshipResolutionWorker] Error processing job ${job.id} for file ${filePath}:`, error);
-            throw error;
+            console.error(`[RelationshipResolutionWorker] FINAL ERROR processing job ${job.id} for POI ${primaryPoi.id}:`, error.message);
+            const failedQueue = this.queueManager.getQueue('failed-jobs');
+            await failedQueue.add('failed-relationship-resolution', {
+                jobData: job.data,
+                error: error.message,
+                stack: error.stack,
+            });
         }
     }
 
-    constructPrompt(filePath, pois) {
-        const poiList = pois.map(p => `- ${p.type}: ${p.name} (id: ${p.id})`).join('\n');
+    constructPrompt(filePath, primaryPoi, contextualPois) {
+        const contextualPoiList = contextualPois.map(p => `- ${p.type}: ${p.name} (id: ${p.id})`).join('\n');
 
         return `
-            Analyze the list of Points of Interest (POIs) from the file "${filePath}" to identify relationships between them.
+            Analyze the primary Point of Interest (POI) from the file "${filePath}" to identify its relationships WITH the contextual POIs from the same file.
 
-            POIs:
-            ${poiList}
+            Primary POI:
+            - ${primaryPoi.type}: ${primaryPoi.name} (id: ${primaryPoi.id})
 
-            Identify relationships such as "calls", "inherits_from", "implements", "uses_type", etc.
-            Format the output as a JSON object with a single key "relationships". This key should contain an array of objects, where each object has:
-            - "from": The ID of the source POI.
-            - "to": The ID of the target POI.
-            - "type": A string describing the relationship (e.g., "CALLS", "IMPLEMENTS").
-            - "evidence": A brief justification for the relationship.
+            Contextual POIs:
+            ${contextualPoiList}
+
+            Identify relationships where the Primary POI is the source (e.g., it "calls" or "uses" a contextual POI).
+            Format the output as a JSON object with a single key "relationships". This key should contain an array of objects where the "from" property is ALWAYS "${primaryPoi.id}".
+            Each relationship object must have the following keys: "id", "from", "to", "type", "evidence".
+            The "id" must be a unique UUID.
 
             Example:
             {
               "relationships": [
                 {
-                  "from": "poi-id-1",
-                  "to": "poi-id-2",
+                  "id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                  "from": "${primaryPoi.id}",
+                  "to": "contextual-poi-id-2",
                   "type": "CALLS",
-                  "evidence": "Function 'alpha' calls function 'beta' on line 42."
+                  "evidence": "Function '${primaryPoi.name}' calls function 'beta' on line 42."
                 }
               ]
             }

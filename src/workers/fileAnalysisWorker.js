@@ -49,8 +49,8 @@ class FileAnalysisWorker {
                     pois: pois,
                 };
                 const db = this.dbManager.getDb();
-                const stmt = db.prepare('INSERT INTO outbox (event_type, payload, status) VALUES (?, ?, ?)');
-                stmt.run(findingPayload.type, JSON.stringify(findingPayload), 'PENDING');
+                const stmt = db.prepare('INSERT INTO outbox (run_id, event_type, payload, status) VALUES (?, ?, ?, ?)');
+                stmt.run(runId, findingPayload.type, JSON.stringify(findingPayload), 'PENDING');
             }
 
             // Trigger directory aggregation
@@ -87,7 +87,14 @@ class FileAnalysisWorker {
         try {
             const sanitized = LLMResponseSanitizer.sanitize(response);
             const parsed = JSON.parse(sanitized);
-            return parsed.pois || [];
+            const pois = parsed.pois || [];
+            // Add a unique ID to each POI, as this is the contract expected by downstream workers.
+            pois.forEach(poi => {
+                if (!poi.id) {
+                    poi.id = uuidv4();
+                }
+            });
+            return pois;
         } catch (error) {
             console.error('Failed to parse LLM response for file analysis:', error);
             console.error('Original response:', response);

@@ -1,3 +1,11 @@
+CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path TEXT NOT NULL UNIQUE,
+    hash TEXT,
+    last_processed DATETIME,
+    status TEXT
+);
+
 CREATE TABLE IF NOT EXISTS pois (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_path TEXT NOT NULL,
@@ -41,6 +49,7 @@ CREATE TABLE IF NOT EXISTS relationship_evidence (
 
 CREATE TABLE IF NOT EXISTS outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT,
     event_type TEXT NOT NULL,
     payload TEXT NOT NULL,
     status TEXT DEFAULT 'PENDING',

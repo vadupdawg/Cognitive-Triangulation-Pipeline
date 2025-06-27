@@ -43,6 +43,21 @@ class DatabaseManager {
     }
 
     /**
+     * Deletes and rebuilds the database from the schema.
+     * Ensures a clean state, primarily for testing.
+     */
+    rebuildDb() {
+        if (this.db) {
+            this.db.close();
+            this.db = null;
+        }
+        if (fs.existsSync(this.dbPath)) {
+            fs.unlinkSync(this.dbPath);
+        }
+        this.initializeDb();
+    }
+
+    /**
      * Applies schema migrations to the database.
      */
     applyMigrations() {

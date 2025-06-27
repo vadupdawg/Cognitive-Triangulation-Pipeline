@@ -32,21 +32,40 @@ class GraphBuilder {
     }
 
     async _persistValidatedRelationships() {
-        const relationshipQuery = "SELECT * FROM relationships WHERE status = 'VALIDATED'";
-        const poiQuery = "SELECT id, file_path, name, type, start_line, end_line, hash FROM pois WHERE id = ?";
+        const relationshipQuery = `
+            SELECT
+                r.id as relationship_id,
+                r.type as relationship_type,
+                r.confidence_score AS confidence_score,
+                s.id as source_id,
+                s.file_path as source_file_path,
+                s.name as source_name,
+                s.type as source_type,
+                s.start_line as source_start_line,
+                s.end_line as source_end_line,
+                t.id as target_id,
+                t.file_path as target_file_path,
+                t.name as target_name,
+                t.type as target_type,
+                t.start_line as target_start_line,
+                t.end_line as target_end_line
+            FROM relationships r
+            JOIN pois s ON r.source_poi_id = s.id
+            JOIN pois t ON r.target_poi_id = t.id
+            WHERE r.status = 'VALIDATED'
+        `;
 
         const relIterator = this.db.prepare(relationshipQuery).iterate();
-        const poiStmt = this.db.prepare(poiQuery);
 
         let currentBatch = [];
         const activePromises = new Set();
         let processedCount = 0;
 
-        const generateSemanticId = (poi) => {
-            if (poi.type === 'file') return poi.file_path;
-            return `${poi.type}:${poi.name}@${poi.file_path}:${poi.start_line}`;
+        const generateSemanticId = (poi, filePath, startLine) => {
+            if (poi.type === 'file') return filePath;
+            return `${poi.type}:${poi.name}@${filePath}:${startLine}`;
         };
-        
+
         const processBatch = async (batch) => {
             const promise = this._runRelationshipBatch(batch)
                 .then(() => {
@@ -63,22 +82,31 @@ class GraphBuilder {
         };
 
         for (const row of relIterator) {
-            const sourcePoi = poiStmt.get(row.source_poi_id);
-            const targetPoi = poiStmt.get(row.target_poi_id);
+            const sourceNode = {
+                id: generateSemanticId({ type: row.source_type, name: row.source_name }, row.source_file_path, row.source_start_line),
+                file_path: row.source_file_path,
+                name: row.source_name,
+                type: row.source_type,
+                start_line: row.source_start_line,
+                end_line: row.source_end_line,
+            };
+            const targetNode = {
+                id: generateSemanticId({ type: row.target_type, name: row.target_name }, row.target_file_path, row.target_start_line),
+                file_path: row.target_file_path,
+                name: row.target_name,
+                type: row.target_type,
+                start_line: row.target_start_line,
+                end_line: row.target_end_line,
+            };
 
-            if (sourcePoi && targetPoi) {
-                const sourceNode = { ...sourcePoi, id: generateSemanticId(sourcePoi) };
-                const targetNode = { ...targetPoi, id: generateSemanticId(targetPoi) };
-
-                currentBatch.push({
-                    source: sourceNode,
-                    target: targetNode,
-                    relationship: {
-                        type: row.type,
-                        confidence: row.confidence_score,
-                    }
-                });
-            }
+            currentBatch.push({
+                source: sourceNode,
+                target: targetNode,
+                relationship: {
+                    type: row.relationship_type,
+                    confidence: row.confidence_score,
+                }
+            });
 
             if (currentBatch.length >= this.config.batchSize) {
                 if (activePromises.size >= this.config.maxConcurrentBatches) {

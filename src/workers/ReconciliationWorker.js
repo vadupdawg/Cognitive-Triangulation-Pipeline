@@ -30,16 +30,13 @@ class ReconciliationWorker {
         if (finalScore > 0.5) { // Confidence threshold
             const finalRelationship = evidence[0]; // Assuming the base relationship data is in the first evidence
             db.prepare(
-                `INSERT INTO relationships (id, sourcePoiId, targetPoiId, type, filePath, status, confidenceScore)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`
+                `INSERT INTO relationships (from_node_id, to_node_id, type, resolution_level)
+                 VALUES (?, ?, ?, ?)`
             ).run(
-                relationshipHash,
-                finalRelationship.sourcePoiId,
-                finalRelationship.targetPoiId,
+                finalRelationship.from,
+                finalRelationship.to,
                 finalRelationship.type,
-                finalRelationship.filePath,
-                'VALIDATED',
-                finalScore
+                'file'
             );
             console.log(`[ReconciliationWorker] Validated relationship ${relationshipHash} with score ${finalScore}`);
         } else {
