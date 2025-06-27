@@ -5,6 +5,7 @@ const { getCacheClient, closeCacheClient } = require('./utils/cacheClient');
 const EntityScout = require('./agents/EntityScout');
 const FileAnalysisWorker = require('./workers/fileAnalysisWorker');
 const DirectoryResolutionWorker = require('./workers/directoryResolutionWorker');
+const DirectoryAggregationWorker = require('./workers/directoryAggregationWorker');
 const RelationshipResolutionWorker = require('./workers/relationshipResolutionWorker');
 const ValidationWorker = require('./workers/ValidationWorker');
 const ReconciliationWorker = require('./workers/ReconciliationWorker');
@@ -80,6 +81,7 @@ class CognitiveTriangulationPipeline {
         // For this simulation, we run them in the same process.
         new FileAnalysisWorker(this.queueManager, this.dbManager, this.cacheClient, this.llmClient);
         new DirectoryResolutionWorker(this.queueManager, this.dbManager, this.cacheClient, this.llmClient);
+        new DirectoryAggregationWorker(this.queueManager, this.cacheClient);
         new RelationshipResolutionWorker(this.queueManager, this.dbManager, this.llmClient);
         new ValidationWorker(this.queueManager, this.dbManager, this.cacheClient);
         new ReconciliationWorker(this.queueManager, this.dbManager);
@@ -170,15 +172,18 @@ class CognitiveTriangulationPipeline {
 
 async function main() {
     const args = process.argv.slice(2);
-    const dirIndex = args.indexOf('--dir');
-    const targetDirectory = dirIndex !== -1 ? args[dirIndex + 1] : process.cwd();
+    const targetDirectory = args.includes('--target') ? args[args.indexOf('--target') + 1] : process.cwd();
+    const isTestMode = args.includes('--test-mode');
     let pipeline;
 
     try {
         pipeline = new CognitiveTriangulationPipeline(targetDirectory);
         await pipeline.run();
         console.log('🎉 Cognitive triangulation pipeline completed successfully!');
-        process.exit(0);
+        if (isTestMode) {
+            // In test mode, we exit cleanly for the test runner.
+            process.exit(0);
+        }
     } catch (error) {
         console.error('💥 Fatal error in pipeline:', error);
         if (pipeline) {

@@ -43,9 +43,10 @@ class DeepSeekClient {
             const requestBody = JSON.stringify({
                 model: 'deepseek-chat',
                 messages: messages,
-                temperature: 0.2,
+                temperature: 0.0,
                 max_tokens: 8000,
-                stream: false
+                stream: false,
+                response_format: { type: 'json_object' }
             });
 
             const response = await this._makeRequest('/chat/completions', 'POST', requestBody);
@@ -95,9 +96,9 @@ class DeepSeekClient {
             const requestBody = JSON.stringify({
                 model: options.model || 'deepseek-chat',
                 messages: options.messages,
-                temperature: options.temperature || 0.2,
+                temperature: options.temperature || 0.0,
                 max_tokens: options.max_tokens || 8000,
-                response_format: options.response_format,
+                response_format: options.response_format || { type: 'json_object' },
                 stream: false
             });
 

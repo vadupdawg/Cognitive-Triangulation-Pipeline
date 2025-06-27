@@ -25,6 +25,16 @@ const config = {
   // Redis Configuration
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
   REDIS_PASSWORD: process.env.REDIS_PASSWORD || undefined,
+
+  // BullMQ Queue Names
+  QUEUE_NAMES: [
+    'file-analysis-queue',
+    'directory-aggregation-queue',
+    'directory-resolution-queue',
+    'relationship-resolution-queue',
+    'reconciliation-queue',
+    'failed-jobs',
+  ],
 };
 
 // Security Hardening: Prevent startup with default password in production

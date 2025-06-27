@@ -38,9 +38,9 @@ class RelationshipResolutionWorker {
 
                 const db = this.dbManager.getDb();
                 const stmt = db.prepare(
-                    'INSERT INTO outbox (id, event_type, payload, status) VALUES (?, ?, ?, ?)'
+                    'INSERT INTO outbox (event_type, payload, status) VALUES (?, ?, ?)'
                 );
-                stmt.run(uuidv4(), findingPayload.type, JSON.stringify(findingPayload), 'PENDING');
+                stmt.run(findingPayload.type, JSON.stringify(findingPayload), 'PENDING');
                 console.log(`[RelationshipResolutionWorker] Wrote ${relationships.length} relationships for ${filePath} to outbox.`);
             }
         } catch (error) {
@@ -83,10 +83,12 @@ class RelationshipResolutionWorker {
 
     parseResponse(response) {
         try {
-            const parsed = JSON.parse(response);
+            const sanitized = response.replace(/```json/g, '').replace(/```/g, '').trim();
+            const parsed = JSON.parse(sanitized);
             return parsed.relationships || [];
         } catch (error) {
             console.error(`Failed to parse LLM response for relationship analysis in ${this.currentJobPath}:`, error);
+            console.error('Original response:', response);
             return [];
         }
     }

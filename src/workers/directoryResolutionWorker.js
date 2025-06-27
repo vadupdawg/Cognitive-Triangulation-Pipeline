@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { Worker } = require('bullmq');
 const { v4: uuidv4 } = require('uuid');
+const LLMResponseSanitizer = require('../utils/LLMResponseSanitizer');
 
 class DirectoryResolutionWorker {
     constructor(queueManager, dbManager, cacheClient, llmClient) {
@@ -36,9 +37,9 @@ class DirectoryResolutionWorker {
 
             const db = this.dbManager.getDb();
             const stmt = db.prepare(
-                'INSERT INTO outbox (id, event_type, payload, status) VALUES (?, ?, ?, ?)'
+                'INSERT INTO directory_summaries (run_id, directory_path, summary_text) VALUES (?, ?, ?)'
             );
-            stmt.run(uuidv4(), findingPayload.type, JSON.stringify(findingPayload), 'PENDING');
+            stmt.run(runId, directoryPath, summary);
 
             console.log(`[DirectoryResolutionWorker] Wrote finding for ${directoryPath} to outbox.`);
         } catch (error) {
@@ -62,26 +63,27 @@ class DirectoryResolutionWorker {
         }
         return fileContents;
     }
-
     constructPrompt(directoryPath, fileContents) {
         const fileSummaries = fileContents.map(f => `File: ${f.fileName}\n---\n${f.content}\n---\n`).join('\n');
         return `
-            Analyze the following files in the directory "${directoryPath}" and provide a concise summary of the directory's purpose and key components.
-            Focus on the overall responsibility of the directory and how the files within it contribute to that.
+            Analyze the files in the directory "${directoryPath}" and provide a concise summary of its purpose.
+            Focus on the directory's overall responsibility and the roles of its key files.
+            Respond with a single JSON object with one key: "summary".
+            Do not include any text, explanation, or markdown formatting before or after the JSON object.
 
             ${fileSummaries}
-
-            Format the output as a JSON object with a single key "summary".
         `;
     }
 
     parseResponse(response) {
         try {
-            const parsed = JSON.parse(response);
-            return parsed.summary || '';
+            const sanitized = LLMResponseSanitizer.sanitize(response);
+            const parsed = JSON.parse(sanitized);
+            return parsed.summary || 'No summary available.';
         } catch (error) {
             console.error('Failed to parse LLM response for directory analysis:', error);
-            return '';
+            console.error('Original response:', response);
+            return 'Summary generation failed.';
         }
     }
 }

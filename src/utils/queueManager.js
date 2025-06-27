@@ -1,5 +1,5 @@
 const { Queue, Worker } = require('bullmq');
-const config = require('../../config');
+const config = require('../config');
 
 const FAILED_JOBS_QUEUE_NAME = 'failed-jobs';
 
@@ -65,7 +65,8 @@ class QueueManager {
 
     const workerConfig = {
       connection: this.connectionOptions,
-      stalledInterval: 30000,
+      stalledInterval: 30000, // 30 seconds
+      lockDuration: 1800000, // 30 minutes
       ...options,
     };
 
@@ -132,6 +133,31 @@ class QueueManager {
     }
 
     console.log('All connections closed successfully.');
+  }
+
+  async clearAllQueues() {
+    console.log('🗑️ Clearing all Redis queues...');
+    const clearPromises = [];
+    for (const queueName of config.QUEUE_NAMES) {
+      const queue = this.getQueue(queueName);
+      // Obliterate is a permanent and immediate action.
+      // It removes the queue and all its jobs from Redis.
+      clearPromises.push(queue.obliterate({ force: true }));
+    }
+
+    const results = await Promise.allSettled(clearPromises);
+    const errorList = results
+      .filter(result => result.status === 'rejected')
+      .map(result => result.reason);
+
+    if (errorList.length > 0) {
+      const aggregateError = new Error('One or more queues failed to clear.');
+      aggregateError.details = errorList;
+      console.error(aggregateError);
+      throw aggregateError;
+    }
+
+    console.log('✅ All Redis queues cleared successfully.');
   }
 }
 

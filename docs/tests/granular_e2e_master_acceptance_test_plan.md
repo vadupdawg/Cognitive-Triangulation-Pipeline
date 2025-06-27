@@ -1,10 +1,10 @@
-# Granular E2E Master Acceptance Test Plan
+# Granular E2E Master Acceptance Test Plan (Revised)
 
 ## 1. Introduction
 
-This document outlines the Master Acceptance Test Plan for the cognitive triangulation pipeline. It is based on the detailed process flow described in the [`docs/research/application_pipeline_map.md`](../research/application_pipeline_map.md).
+This document outlines the revised Master Acceptance Test Plan for the cognitive triangulation pipeline, with a focus on **granular data integrity validation** at every persistence layer. It directly addresses the critiques outlined in [`docs/devil/critique_report_sprint_7_granular_e2e_specs.md`](../devil/critique_report_sprint_7_granular_e2e_specs.md) by replacing superficial checks with deep, schema-aware, and semantically-validated criteria.
 
-The testing strategy adheres to a "no mocking" principle, requiring all tests to be executed against live instances of all external dependencies, including Redis, SQLite, Neo4j, and the Deepseek AI service. Each test case is designed as a granular, end-to-end (E2E) scenario that verifies a specific step in the application pipeline. Every test includes an AI-verifiable completion criterion to enable automated validation of the system's behavior.
+The testing strategy requires all tests to be executed against live instances of all external dependencies. Each test case verifies a specific step in the application pipeline by querying the database state directly. Every test includes a highly detailed, AI-verifiable completion criterion to enable automated validation of the system's data correctness.
 
 A small, well-defined `polyglot-test` directory will be used as the target for analysis in all test cases to ensure consistent and predictable outcomes.
 
@@ -13,105 +13,116 @@ A small, well-defined `polyglot-test` directory will be used as the target for a
 - **Target Codebase**: The `polyglot-test` directory.
 - **Node.js**: Runtime environment.
 - **Redis**: Live instance for BullMQ and caching.
-- **SQLite**: Live instance for transactional data.
+- **SQLite**: Live instance for transactional and relational data.
 - **Neo4j**: Live instance with the APOC library installed.
 - **Deepseek AI**: A valid API key must be configured in the environment.
 
 ## 3. High-Level Acceptance Tests
 
-### Phase 1-- Pipeline Initiation & Job Creation
+### Phase 1-- Project Initialization and Job Creation
 
 ---
 
-#### Test Case-- E2E-INIT-01-- CLI-Triggered Run
+#### Test Case-- E2E-INIT-01-- CLI-Triggered Run and Job Validation
 
-- **Description**-- Verifies that the pipeline can be successfully initiated via the command-line interface (`src/main.js`), and that the `EntityScout` agent correctly populates the initial job queues.
-- **Given**-- A clean environment (empty Redis queues, empty SQLite `outbox` and `relationships` tables).
+- **Description**-- Verifies that the `EntityScout` agent correctly populates the initial job queues and run manifests with semantically correct data.
+- **Given**-- A clean environment (empty Redis queues, empty relevant SQLite tables).
 - **When**-- The command `node src/main.js --target polyglot-test` is executed.
 - **Then**-- The `EntityScout` agent scans the `polyglot-test` directory and creates jobs.
 - **AI-Verifiable Completion Criterion**--
-    1.  The `file-analysis-queue` in BullMQ (Redis) must contain a job for every file inside the `polyglot-test` directory.
-    2.  The `directory-resolution-queue` in BullMQ (Redis) must contain a job for every subdirectory within `polyglot-test`.
-    3.  A run manifest key must exist in Redis containing metadata about the initiated run.
+    1.  **Redis `file-analysis-queue`**:
+        -   The queue must contain a job for every non-binary file inside the `polyglot-test` directory.
+        -   Each job's payload (data) must be a JSON object containing a `file_path` key, where the value is a non-empty string (e.g., `polyglot-test/js/auth.js`).
+    2.  **Redis `directory-resolution-queue`**:
+        -   The queue must contain a job for every subdirectory.
+        -   Each job's payload must be a JSON object containing a `directory_path` key.
+    3.  **Redis Run Manifest**:
+        -   A run manifest key (e.g., `run_manifest:<run_id>`) must exist.
+        -   The manifest must be a Redis Hash containing keys like `start_time`, `target_directory`, and `status`, with `status` being `IN_PROGRESS`.
 
 ---
 
-### Phase 2-- Core Analysis Pipeline
+### Phase 2-- File Analysis and Entity Extraction
 
 ---
 
-#### Test Case-- E2E-CORE-01-- File-Level POI Analysis
+#### Test Case-- E2E-CORE-01-- File-Level POI Analysis and Database Validation
 
-- **Description**-- Verifies that the `FileAnalysisWorker` correctly processes a file, queries the LLM, and persists the findings to the transactional outbox.
-- **Given**-- An `analyze-file` job for a specific file (e.g., `polyglot-test/js/auth.js`) is present in the `file-analysis-queue`.
-- **When**-- The `FileAnalysisWorker` consumes and processes the job.
-- **Then**-- The worker sends the file's content to the Deepseek LLM and receives a list of Points of Interest (POIs).
+- **Description**-- Verifies that the `FileAnalysisWorker` correctly processes a file, queries the LLM, and persists findings with full schema and data integrity in the `points_of_interest` table.
+- **Given**-- An `analyze-file` job for `polyglot-test/js/auth.js` is processed.
+- **When**-- The `FileAnalysisWorker` consumes the job and persists the results.
+- **Then**-- The worker calls the LLM and writes the resulting Points of Interest (POIs) to the SQLite database.
 - **AI-Verifiable Completion Criterion**--
-    1.  A new record with the `event_type` of `file-analysis-finding` must be created in the SQLite `outbox` table.
-    2.  The `payload` of this record must be a valid JSON structure containing POIs (e.g., function definitions, imports) identified from the source file.
+    1.  **SQLite `points_of_interest` Table Schema**:
+        -   Query `PRAGMA table_info('points_of_interest')`.
+        -   The result must contain columns-- `id` (TEXT, PK), `file_path` (TEXT, NOT NULL), `name` (TEXT, NOT NULL), `type` (TEXT, NOT NULL), `start_line` (INTEGER), `end_line` (INTEGER), `confidence` (REAL).
+    2.  **SQLite `points_of_interest` Data Correctness**:
+        -   `SELECT * FROM points_of_interest WHERE file_path = 'polyglot-test/js/auth.js'`.
+        -   The query must return multiple rows.
+        -   For a known function like `authenticateUser`, there must be a row where `name` is 'authenticateUser', `type` is 'Function', and `start_line` and `end_line` are accurate integer values.
+        -   The `id` for each POI must be a unique, non-null string.
 
 ---
 
-#### Test Case-- E2E-CORE-02-- Directory-Level Summary
+### Phase 3-- Relationship Resolution
 
-- **Description**-- Verifies that the `DirectoryResolutionWorker` correctly generates and persists a summary for a directory.
-- **Given**-- An `analyze-directory` job for a specific directory (e.g., `polyglot-test/python`) is present in the `directory-resolution-queue`.
-- **When**-- The `DirectoryResolutionWorker` consumes and processes the job.
-- **Then**-- The worker sends the contents of all files in the directory to the LLM and receives a summary.
+---
+
+#### Test Case-- E2E-CORE-02-- Intra-File Relationship Analysis and Database Validation
+
+- **Description**-- Verifies that the `RelationshipResolutionWorker` identifies relationships between POIs within a file and persists them correctly to the `resolved_relationships` table.
+- **Given**-- POIs for a file (e.g., `polyglot-test/js/auth.js`) exist in the `points_of_interest` table.
+- **When**-- The `RelationshipResolutionWorker` processes the POIs for the file.
+- **Then**-- The worker queries the LLM and persists the identified relationships.
 - **AI-Verifiable Completion Criterion**--
-    1.  A new record with the `event_type` of `directory-analysis-finding` must be created in the SQLite `outbox` table.
-    2.  The `payload` of this record must contain a non-empty string with the LLM-generated summary.
+    1.  **SQLite `resolved_relationships` Table Schema**:
+        -   Query `PRAGMA table_info('resolved_relationships')`.
+        -   Verify columns-- `id` (INTEGER, PK), `source_poi_id` (TEXT, NOT NULL), `target_poi_id` (TEXT, NOT NULL), `type` (TEXT, NOT NULL), `confidence` (REAL), `explanation` (TEXT), `pass_type` (TEXT).
+        -   Verify Foreign Key constraints on `source_poi_id` and `target_poi_id`.
+    2.  **SQLite `resolved_relationships` Data Correctness**:
+        -   Execute a JOIN query to find relationships for `polyglot-test/js/auth.js`.
+        -   For a known relationship (e.g., `authenticateUser` calling `hashPassword`), a row must exist where the `source_poi_id` corresponds to `authenticateUser`, `target_poi_id` corresponds to `hashPassword`, and `type` is 'CALLS'.
+        -   The `pass_type` must be 'INTRA_FILE'.
+        -   `confidence` must be a floating-point number between 0 and 1.
 
 ---
 
-#### Test Case-- E2E-CORE-03-- Intra-File Relationship Analysis
+### Phase 4-- Graph Construction
 
-- **Description**-- Verifies that after a file analysis is complete, the `TransactionalOutboxPublisher` and `RelationshipResolutionWorker` collaborate to identify relationships between POIs within that file.
-- **Given**-- A `file-analysis-finding` event exists in the `outbox` table.
-- **When**--
-    1. The `TransactionalOutboxPublisher` polls the `outbox` and creates a `relationship-resolution` job.
-    2. The `RelationshipResolutionWorker` consumes and processes the job.
-- **Then**-- The worker queries the LLM to find relationships between the POIs from the initial analysis.
+---
+
+#### Test Case-- E2E-BUILD-01-- Knowledge Graph Construction and Validation
+
+- **Description**-- Verifies that the `GraphBuilder` agent correctly reads validated relationships from SQLite and persists them as a semantically accurate graph in Neo4j.
+- **Given**-- The SQLite `resolved_relationships` table contains validated relationships. The Neo4j database is empty.
+- **When**-- The `GraphBuilder` agent is executed.
+- **Then**-- The agent reads from SQLite and executes Cypher queries to build the graph.
 - **AI-Verifiable Completion Criterion**--
-    1.  A new record with the `event_type` of `relationship-analysis-finding` must be created in the SQLite `outbox` table.
-    2.  The `payload` of this record must be a valid JSON structure containing identified relationships (e.g., `CALLS`, `IMPORTS`) between the POIs of the file.
+    1.  **Neo4j Node Validation**:
+        -   `MATCH (f:File {path: 'polyglot-test/js/auth.js'}) RETURN f.path, f.language`. The query must return one node with the correct path and language ('JavaScript').
+        -   `MATCH (p:Function {name: 'authenticateUser'}) RETURN p.name, p.startLine`. The query must return one node with the correct name and an integer `startLine`.
+        -   All nodes must have the correct labels (`File`, `Function`, `Class`, etc.) as specified in the schema.
+    2.  **Neo4j Relationship Validation**:
+        -   `MATCH (f:Function {name: 'authenticateUser'})-[r:CALLS]->(t:Function {name: 'hashPassword'}) RETURN type(r)`. The query must return one relationship of type 'CALLS'.
+        -   `MATCH (file:File)-[r:CONTAINS]->(func:Function) WHERE file.path = 'polyglot-test/js/auth.js' RETURN count(func)`. The count must match the number of functions in that file.
+        -   All relationship types must match the allowed types in the schema (`CONTAINS`, `CALLS`, `IMPORTS`, etc.).
 
 ---
 
-### Phase 3-- Validation, Reconciliation, and Persistence
+### Phase 5-- Data Invalidation and Self-Cleaning
 
 ---
 
-#### Test Case-- E2E-VALID-01-- Evidence Aggregation
+#### Test Case-- E2E-CLEAN-01-- File Deletion and Cascade Delete Validation
 
-- **Description**-- Verifies that the `ValidationWorker` correctly aggregates evidence for a relationship and tracks its progress.
-- **Given**-- A `relationship-analysis-finding` event exists in the `outbox` table, which is then moved to the `analysis-findings-queue`.
-- **When**-- The `ValidationWorker` consumes the job from the `analysis-findings-queue`.
-- **Then**-- The worker persists the finding as evidence and updates the central counter.
+- **Description**-- Verifies that when a file is deleted from the source, the `SelfCleaningAgent` correctly removes the corresponding data from all databases.
+- **Given**-- A complete graph exists for the `polyglot-test` directory. The file `polyglot-test/js/auth.js` is deleted from the filesystem.
+- **When**-- The `SelfCleaningAgent` is executed.
+- **Then**-- The agent identifies the deleted file and triggers cascade deletions.
 - **AI-Verifiable Completion Criterion**--
-    1.  A new record must be created in the `relationship_evidence` table in SQLite, corresponding to the finding.
-    2.  A Redis key for the relationship's evidence count must be incremented to `1`.
-
----
-
-#### Test Case-- E2E-RECON-01-- Relationship Reconciliation and Scoring
-
-- **Description**-- Verifies that the `ReconciliationWorker` correctly calculates a confidence score and persists a `VALIDATED` relationship when the score exceeds the configured threshold.
-- **Given**-- A `reconcile-relationship` job exists in the `reconciliation-queue` (triggered previously by the `ValidationWorker`).
-- **When**-- The `ReconciliationWorker` consumes and processes the job.
-- **Then**-- The `ConfidenceScoringService` calculates a score based on all available evidence.
-- **AI-Verifiable Completion Criterion**--
-    1.  Assuming the confidence score exceeds the threshold, a new record must be created in the `relationships` table in SQLite with a `status` of `VALIDATED`.
-    2.  The `source_poi_id` and `target_poi_id` in the record must correctly link to existing POIs.
-
----
-
-#### Test Case-- E2E-BUILD-01-- Knowledge Graph Construction
-
-- **Description**-- Verifies that the `GraphBuilder` agent can successfully read validated relationships from SQLite and persist them as a graph in Neo4j.
-- **Given**-- The SQLite `relationships` table contains at least one `VALIDATED` relationship. The Neo4j database is empty.
-- **When**-- The `GraphBuilder` agent is executed after all other pipeline jobs for the run are complete.
-- **Then**-- The agent reads the validated data and executes Cypher queries to build the graph.
-- **AI-Verifiable Completion Criterion**--
-    1.  Execute a Cypher query in Neo4j-- `MATCH (n)-[r]->(m) RETURN count(r) AS relationshipCount`.
-    2.  The `relationshipCount` must be greater than 0 and match the number of `VALIDATED` relationships in the SQLite `relationships` table for the completed run.
+    1.  **SQLite Validation**:
+        -   `SELECT * FROM points_of_interest WHERE file_path = 'polyglot-test/js/auth.js'`. The query must return 0 rows.
+        -   `SELECT * FROM resolved_relationships WHERE source_poi_id LIKE '%polyglot-test/js/auth.js%'`. The query must return 0 rows.
+    2.  **Neo4j Validation**:
+        -   `MATCH (f:File {path: 'polyglot-test/js/auth.js'}) RETURN f`. The query must return 0 nodes.
+        -   `MATCH (p) WHERE p.id CONTAINS 'polyglot-test/js/auth.js' RETURN p`. The query must return 0 nodes (verifying POIs are also gone).

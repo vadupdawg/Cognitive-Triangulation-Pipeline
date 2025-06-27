@@ -43,57 +43,50 @@ class EntityScout {
 
     async _discoverAndCreateJobs() {
         const fileJobs = [];
-        const dirJobs = [];
-        const fileToJobMap = {};
-        const fileJobIds = new Set();
-        const dirJobIds = new Set();
-
+        const dirFileMap = new Map();
         const ignoreDirs = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage']);
+        const ignoreFiles = new Set(['.gitignore']);
+        const ignoreExtensions = new Set(['.md']);
 
         const recursiveDiscover = async (currentDir) => {
             const entries = await fs.readdir(currentDir, { withFileTypes: true });
-            const dirJobId = `dir-job-${uuidv4()}`;
-            dirJobIds.add(dirJobId);
-            dirJobs.push({
-                name: 'analyze-directory',
-                data: { directoryPath: currentDir, runId: this.runId, jobId: dirJobId },
-            });
+            if (!dirFileMap.has(currentDir)) {
+                dirFileMap.set(currentDir, []);
+            }
 
             for (const entry of entries) {
                 const fullPath = path.join(currentDir, entry.name);
                 if (entry.isDirectory()) {
-                    if (!ignoreDirs.has(entry.name)) {
+                    if (!ignoreDirs.has(entry.name) && !entry.name.includes('test')) {
                         await recursiveDiscover(fullPath);
                     }
                 } else {
-                    const fileJobId = `file-job-${uuidv4()}`;
-                    fileJobIds.add(fileJobId);
-                    fileToJobMap[fullPath] = fileJobId;
-                    fileJobs.push({
-                        name: 'analyze-file',
-                        data: { filePath: fullPath, runId: this.runId, jobId: fileJobId },
-                    });
+                    const extension = path.extname(entry.name);
+                    if (!ignoreFiles.has(entry.name) && !ignoreExtensions.has(extension)) {
+                        const fileJobId = `file-job-${uuidv4()}`;
+                        fileJobs.push({
+                            name: 'analyze-file',
+                            data: { filePath: fullPath, runId: this.runId, jobId: fileJobId },
+                        });
+                        dirFileMap.get(currentDir).push(fileJobId);
+                    }
                 }
             }
         };
 
         await recursiveDiscover(this.targetDirectory);
 
-        // Save manifest to Redis
+        // Save directory to file job mappings in Redis
         const pipeline = this.cacheClient.pipeline();
-        pipeline.set(`run:${this.runId}:config`, JSON.stringify({ rootPath: this.targetDirectory }));
-        if (fileJobIds.size > 0) {
-            pipeline.sadd(`run:${this.runId}:jobs:files`, Array.from(fileJobIds));
-        }
-        if (dirJobIds.size > 0) {
-            pipeline.sadd(`run:${this.runId}:jobs:dirs`, Array.from(dirJobIds));
-        }
-        if (Object.keys(fileToJobMap).length > 0) {
-            pipeline.hset(`run:${this.runId}:file_to_job_map`, fileToJobMap);
+        for (const [dir, files] of dirFileMap.entries()) {
+            if (files.length > 0) {
+                const directoryFilesKey = `run:${this.runId}:dir:${dir}:files`;
+                pipeline.sadd(directoryFilesKey, files);
+            }
         }
         await pipeline.exec();
 
-        return { fileJobs, dirJobs };
+        return { fileJobs, dirJobs: [] }; // No direct directory jobs
     }
 }
 
