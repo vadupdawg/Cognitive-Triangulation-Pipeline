@@ -1,4 +1,5 @@
 const { Queue, Worker } = require('bullmq');
+const IORedis = require('ioredis');
 const config = require('../config');
 
 const FAILED_JOBS_QUEUE_NAME = 'failed-jobs';
@@ -11,43 +12,69 @@ const DEFAULT_JOB_OPTIONS = {
   },
 };
 
-const { EventEmitter } = require('events');
+const ALLOWED_QUEUES = new Set((config.QUEUE_NAMES || []).concat([FAILED_JOBS_QUEUE_NAME]));
 
 class QueueManager {
   constructor() {
-    this.activeQueues = new Map();
     this.workers = [];
-    this.events = new EventEmitter();
-    const redisURL = new URL(config.REDIS_URL);
-    this.connectionOptions = {
-      host: redisURL.hostname,
-      port: redisURL.port,
+    this.activeQueues = new Map();
+    this.connection = null;
+    this.isConnected = false;
+
+    this.connection = new IORedis(config.REDIS_URL, {
       maxRetriesPerRequest: null,
-    };
-    if (config.REDIS_PASSWORD && config.REDIS_PASSWORD.length > 0) {
-      this.connectionOptions.password = config.REDIS_PASSWORD;
+      enableReadyCheck: true,
+    });
+
+    this.connection.on('connect', () => {
+      this.isConnected = true;
+      console.log('Successfully connected to Redis.');
+    });
+
+    this.connection.on('error', (err) => {
+      console.error('Redis Client Error:', err);
+      this.isConnected = false;
+    });
+
+    this.connection.on('end', () => {
+      this.isConnected = false;
+      console.log('Redis connection closed.');
+    });
+  }
+
+  async connect() {
+    if (this.isConnected) {
+      return Promise.resolve();
     }
+    // The 'ready' event indicates the connection is established and ready for commands.
+    return new Promise((resolve, reject) => {
+      this.connection.once('ready', resolve);
+      this.connection.once('error', reject);
+    });
   }
 
   getQueue(queueName) {
+    if (!ALLOWED_QUEUES.has(queueName)) {
+        console.error(`Disallowed queue name requested: ${queueName}`);
+        return null;
+    }
+
     if (this.activeQueues.has(queueName)) {
       return this.activeQueues.get(queueName);
     }
 
     console.log(`Creating new queue instance for: ${queueName}`);
 
-    const queueOptions = {
-      connection: this.connectionOptions,
+    const newQueue = new Queue(queueName, {
+      connection: this.connection,
       defaultJobOptions: DEFAULT_JOB_OPTIONS,
-    };
-
-    const newQueue = new Queue(queueName, queueOptions);
+    });
 
     if (queueName !== FAILED_JOBS_QUEUE_NAME) {
       newQueue.on('failed', async (job, error) => {
-        console.log(`Job ${job.id} in queue ${queueName} failed permanently. Error: ${error.message}`);
-        const failedJobsQueue = this.getQueue(FAILED_JOBS_QUEUE_NAME);
-        await failedJobsQueue.add(job.name, job.data);
+        console.log(`Job ${job.id} in queue ${queueName} failed permanently. Forwarding to DLQ. Error: ${error.message}`);
+        const dlq = this.getQueue(FAILED_JOBS_QUEUE_NAME);
+        await dlq.add(job.name, job.data);
       });
     }
 
@@ -56,109 +83,73 @@ class QueueManager {
   }
 
   createWorker(queueName, processor, options = {}) {
-    if (!queueName || typeof queueName !== 'string') {
-      throw new Error('A valid queueName (non-empty string) is required.');
-    }
-    if (!processor || typeof processor !== 'function') {
-      throw new Error('A valid processor function is required.');
-    }
-
     const workerConfig = {
-      connection: this.connectionOptions,
-      stalledInterval: 30000, // 30 seconds
-      lockDuration: 1800000, // 30 minutes
+      connection: this.connection,
+      stalledInterval: 30000,
+      lockDuration: 1800000,
       ...options,
     };
 
     const worker = new Worker(queueName, processor, workerConfig);
-
-    worker.on('completed', (job) => {
-      console.log(`Job ${job.id} in queue ${queueName} completed successfully.`);
-    });
-
-    worker.on('failed', (job, error) => {
-      console.error(`Job ${job.id} in queue ${queueName} failed with error: ${error.message}`);
-    });
-
-    this.workers.push(worker);
     this.workers.push(worker);
     return worker;
   }
 
-  async getJobCounts() {
-    const allCounts = {
-      active: 0,
-      waiting: 0,
-      completed: 0,
-      failed: 0,
-      delayed: 0,
-    };
-
-    for (const queue of this.activeQueues.values()) {
-      const counts = await queue.getJobCounts();
-      allCounts.active += counts.active || 0;
-      allCounts.waiting += counts.waiting || 0;
-      allCounts.completed += counts.completed || 0;
-      allCounts.failed += counts.failed || 0;
-      allCounts.delayed += counts.delayed || 0;
-    }
-
-    return allCounts;
-  }
-
   async closeConnections() {
-    console.log('Attempting to close all active connections...');
-    const closePromises = [];
-    for (const queue of this.activeQueues.values()) {
-      console.log(`Closing queue: ${queue.name}`);
-      closePromises.push(queue.close());
+    console.log('Closing all active queues, workers, and the main Redis connection...');
+
+    const closePromises = [
+      ...Array.from(this.activeQueues.values()).map(q => q.close()),
+      ...this.workers.map(w => w.close()),
+    ];
+
+    await Promise.allSettled(closePromises);
+
+    if (this.connection) {
+      await this.connection.quit();
     }
 
-    for (const worker of this.workers) {
-      console.log(`Closing worker for queue: ${worker.name}`);
-      closePromises.push(worker.close());
-    }
-
-    const results = await Promise.allSettled(closePromises);
-
-    const errorList = results
-      .filter(result => result.status === 'rejected')
-      .map(result => result.reason);
-
-    if (errorList.length > 0) {
-      const aggregateError = new Error('One or more connections failed to close.');
-      aggregateError.details = errorList;
-      console.error(aggregateError);
-      throw aggregateError;
-    }
-
-    console.log('All connections closed successfully.');
+    this.activeQueues.clear();
+    this.workers = [];
+    console.log('All connections have been closed.');
   }
 
   async clearAllQueues() {
     console.log('🗑️ Clearing all Redis queues...');
     const clearPromises = [];
-    for (const queueName of config.QUEUE_NAMES) {
+    // Ensure config.QUEUE_NAMES is an array before iterating
+    const queueNames = Array.isArray(config.QUEUE_NAMES) ? config.QUEUE_NAMES : [];
+    for (const queueName of queueNames) {
       const queue = this.getQueue(queueName);
-      // Obliterate is a permanent and immediate action.
-      // It removes the queue and all its jobs from Redis.
-      clearPromises.push(queue.obliterate({ force: true }));
+      if (queue) {
+        clearPromises.push(queue.obliterate({ force: true }));
+      }
     }
 
-    const results = await Promise.allSettled(clearPromises);
-    const errorList = results
-      .filter(result => result.status === 'rejected')
-      .map(result => result.reason);
-
-    if (errorList.length > 0) {
-      const aggregateError = new Error('One or more queues failed to clear.');
-      aggregateError.details = errorList;
-      console.error(aggregateError);
-      throw aggregateError;
+    // Also clear the failed jobs queue if it's not in the main list
+    if (!queueNames.includes(FAILED_JOBS_QUEUE_NAME)) {
+        const dlq = this.getQueue(FAILED_JOBS_QUEUE_NAME);
+        if (dlq) {
+            clearPromises.push(dlq.obliterate({ force: true }));
+        }
     }
 
+    await Promise.allSettled(clearPromises);
     console.log('✅ All Redis queues cleared successfully.');
   }
 }
 
-module.exports = QueueManager;
+// To maintain a single instance throughout the application, we export a singleton.
+let queueManagerInstance;
+const getInstance = () => {
+    if (!queueManagerInstance) {
+        queueManagerInstance = new QueueManager();
+    }
+    return queueManagerInstance;
+}
+
+module.exports = {
+    getInstance,
+    // Exporting the class for testing purposes
+    QueueManagerForTest: QueueManager,
+};
