@@ -1,6 +1,6 @@
 const { DatabaseManager } = require('./utils/sqliteDb');
 const neo4jDriver = require('./utils/neo4jDriver');
-const QueueManager = require('./utils/queueManager');
+const { getInstance: getQueueManagerInstance } = require('./utils/queueManager');
 const { getCacheClient, closeCacheClient } = require('./utils/cacheClient');
 const EntityScout = require('./agents/EntityScout');
 const FileAnalysisWorker = require('./workers/fileAnalysisWorker');
@@ -20,7 +20,7 @@ class CognitiveTriangulationPipeline {
         this.targetDirectory = targetDirectory;
         this.dbPath = dbPath;
         this.runId = uuidv4();
-        this.queueManager = new QueueManager();
+        this.queueManager = getQueueManagerInstance();
         this.dbManager = new DatabaseManager(this.dbPath);
         this.cacheClient = getCacheClient();
         this.llmClient = getDeepseekClient();
@@ -34,6 +34,7 @@ class CognitiveTriangulationPipeline {
 
     async initialize() {
         console.log('🚀 [main.js] Initializing Cognitive Triangulation v2 Pipeline...');
+        await this.queueManager.connect();
         this.dbManager.initializeDb();
         console.log('🚀 [main.js] Database schema initialized.');
         await this.clearDatabases();
@@ -67,18 +68,16 @@ class CognitiveTriangulationPipeline {
 
             this.metrics.endTime = new Date();
             await this.printFinalReport();
-await this.printFinalReport();
+        } catch (error) {
+            console.error('❌ [main.js] Critical error in pipeline execution:', error);
+            throw error;
+        } finally {
+            await this.close();
+        }
+    }
 
-} catch (error) {
-console.error('❌ [main.js] Critical error in pipeline execution:', error);
-throw error;
-} finally {
-await this.close();
-}
-}
-
-startWorkers() {
-// Note: In a real distributed system, these would run in separate processes.
+    startWorkers() {
+        // Note: In a real distributed system, these would run in separate processes.
         new FileAnalysisWorker(this.queueManager, this.dbManager, this.cacheClient, this.llmClient);
         new DirectoryResolutionWorker(this.queueManager, this.dbManager, this.cacheClient, this.llmClient);
         new DirectoryAggregationWorker(this.queueManager, this.cacheClient);

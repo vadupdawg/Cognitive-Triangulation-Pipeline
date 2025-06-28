@@ -8,7 +8,7 @@ class DirectoryAggregationWorker {
         
         if (!options.processOnly) {
             this.worker = new Worker('directory-aggregation-queue', this.process.bind(this), {
-                connection: this.queueManager.connectionOptions,
+                connection: this.queueManager.connection,
                 concurrency: 10,
             });
         }

@@ -7,7 +7,7 @@ class RelationshipResolutionWorker {
         this.dbManager = dbManager;
         this.llmClient = llmClient;
         this.worker = new Worker('relationship-resolution-queue', this.process.bind(this), {
-            connection: this.queueManager.connectionOptions,
+            connection: this.queueManager.connection,
             concurrency: 2 // Reduced concurrency to avoid overwhelming the API
         });
     }

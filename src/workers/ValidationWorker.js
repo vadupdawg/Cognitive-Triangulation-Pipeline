@@ -36,7 +36,7 @@ class ValidationWorker {
         });
 
         this.worker = new Worker('analysis-findings-queue', this.process.bind(this), {
-            connection: this.queueManager.connectionOptions,
+            connection: this.queueManager.connection,
             concurrency: 1, // Concurrency is now handled by batching, not multiple workers
         });
     }

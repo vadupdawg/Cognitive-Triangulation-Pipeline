@@ -6,7 +6,7 @@ class ReconciliationWorker {
         this.queueManager = queueManager;
         this.dbManager = dbManager;
         this.worker = new Worker('reconciliation-queue', this.process.bind(this), {
-            connection: this.queueManager.connectionOptions,
+            connection: this.queueManager.connection,
             concurrency: 5
         });
     }

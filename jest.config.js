@@ -4,6 +4,7 @@ module.exports = {
   testTimeout: 90000,
   testMatch: [
     '<rootDir>/tests/acceptance/**/*.spec.js',
+    '<rootDir>/tests/acceptance/**/*.test.js',
     '<rootDir>/tests/functional/**/*.test.js'
   ],
 };

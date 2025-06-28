@@ -11,7 +11,7 @@ class GlobalResolutionWorker {
             this.worker = new Worker(
                 'global-resolution-queue',
                 this.processJob.bind(this),
-                { connection: queueManager.connectionOptions, concurrency: options.concurrency || 1 }
+                { connection: queueManager.connection, concurrency: options.concurrency || 1 }
             );
 
             this.worker.on('completed', (job) => {

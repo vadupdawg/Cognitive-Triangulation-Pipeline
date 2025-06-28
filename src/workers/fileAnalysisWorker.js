@@ -3,6 +3,9 @@ const { v4: uuidv4 } = require('uuid');
 const fs = require('fs').promises;
 const path = require('path');
 const LLMResponseSanitizer = require('../utils/LLMResponseSanitizer');
+const { getTokenizer } = require('../utils/tokenizer');
+
+const MAX_INPUT_TOKENS = 50000; // Leave a buffer for the prompt template
 
 class FileAnalysisWorker {
     constructor(queueManager, dbManager, cacheClient, llmClient, options = {}) {
@@ -11,10 +14,11 @@ class FileAnalysisWorker {
         this.cacheClient = cacheClient;
         this.llmClient = llmClient;
         this.directoryAggregationQueue = this.queueManager.getQueue('directory-aggregation-queue');
+        this.tokenizer = getTokenizer();
 
         if (!options.processOnly) {
             this.worker = new Worker('file-analysis-queue', this.process.bind(this), {
-                connection: this.queueManager.connectionOptions,
+                connection: this.queueManager.connection,
                 concurrency: 100 // Increased concurrency
             });
         }
@@ -34,7 +38,18 @@ class FileAnalysisWorker {
         console.log(`[FileAnalysisWorker] Processing job ${job.id} for file: ${filePath}`);
 
         try {
-            const content = await fs.readFile(filePath, 'utf-8');
+            let content = await fs.readFile(filePath, 'utf-8');
+            const tokenCount = this.tokenizer(content);
+
+            if (tokenCount > MAX_INPUT_TOKENS) {
+                console.warn(`[FileAnalysisWorker] File ${filePath} exceeds token limit (${tokenCount} > ${MAX_INPUT_TOKENS}). Truncating content.`);
+                // Truncate from the middle to preserve start and end
+                const halfLimit = Math.floor(MAX_INPUT_TOKENS / 2);
+                const start = content.substring(0, halfLimit);
+                const end = content.substring(content.length - halfLimit);
+                content = `${start}\n\n... (content truncated) ...\n\n${end}`;
+            }
+
             const prompt = this.constructPrompt(filePath, content);
             const llmResponse = await this.llmClient.query(prompt);
             const pois = this.parseResponse(llmResponse);

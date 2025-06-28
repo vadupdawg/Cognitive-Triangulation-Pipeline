@@ -11,7 +11,7 @@ class DirectoryResolutionWorker {
         this.cacheClient = cacheClient;
         this.llmClient = llmClient;
         this.worker = new Worker('directory-resolution-queue', this.process.bind(this), {
-            connection: this.queueManager.connectionOptions,
+            connection: this.queueManager.connection,
             concurrency: 2 // Lower concurrency for directory analysis
         });
     }

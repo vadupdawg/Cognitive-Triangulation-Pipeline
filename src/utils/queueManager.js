@@ -137,6 +137,25 @@ class QueueManager {
     await Promise.allSettled(clearPromises);
     console.log('✅ All Redis queues cleared successfully.');
   }
+
+  async getJobCounts() {
+    const jobCounts = {
+        active: 0,
+        waiting: 0,
+        completed: 0,
+        failed: 0,
+        delayed: 0,
+    };
+    for (const queue of this.activeQueues.values()) {
+        const counts = await queue.getJobCounts('active', 'waiting', 'completed', 'failed', 'delayed');
+        jobCounts.active += counts.active;
+        jobCounts.waiting += counts.waiting;
+        jobCounts.completed += counts.completed;
+        jobCounts.failed += counts.failed;
+        jobCounts.delayed += counts.delayed;
+    }
+    return jobCounts;
+  }
 }
 
 // To maintain a single instance throughout the application, we export a singleton.
