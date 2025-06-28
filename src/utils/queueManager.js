@@ -1,6 +1,6 @@
 const { Queue, Worker } = require('bullmq');
 const IORedis = require('ioredis');
-const config = require('../config');
+const config = require('../../config/index.js');
 
 const FAILED_JOBS_QUEUE_NAME = 'failed-jobs';
 

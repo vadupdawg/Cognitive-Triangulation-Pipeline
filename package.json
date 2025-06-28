@@ -17,7 +17,8 @@
     "test:neo4j:ip": "cross-env NEO4J_URI=bolt://127.0.0.1:7687 node test_neo4j_connection.js"
   },
   "dependencies": {
-    "ajv": "^8.12.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "axios": "^1.6.2",
     "better-sqlite3": "^12.0.0",
     "bullmq": "^5.56.0",
