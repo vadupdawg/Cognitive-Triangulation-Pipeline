@@ -1,35 +1,35 @@
-import { Server } from '@modelcontextprotocol/server';
-import { StdioTransport } from '@modelcontextprotocol/server/stdio';
-import { EntityScout } from './agents/EntityScout.js';
-import { GraphBuilder } from './agents/GraphBuilder.js';
-import { RelationshipResolver } from './agents/RelationshipResolver.js';
-import { SelfCleaningAgent } from './agents/SelfCleaningAgent.js';
-import { getDb } from './utils/sqliteDb.js';
-import { driver as neo4jDriver } from './utils/neo4jDriver.js';
-import { queueManager } from './utils/queueManager.js';
-import logger from './utils/logger.js';
-import config from './config.js';
+import { createRequire } from 'module';
+import { createReadStream, createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
+import * as readline from 'readline';
+
+const require = createRequire(import.meta.url);
+
+// Import CommonJS modules
+const { EntityScout } = require('./agents/EntityScout.js');
+const { GraphBuilder } = require('./agents/GraphBuilder.js');
+const { RelationshipResolver } = require('./agents/RelationshipResolver.js');
+const { SelfCleaningAgent } = require('./agents/SelfCleaningAgent.js');
+const { getDb, initializeDb } = require('./utils/sqliteDb.js');
+const { driver: neo4jDriver } = require('./utils/neo4jDriver.js');
+const { queueManager } = require('./utils/queueManager.js');
+const logger = require('./utils/logger.js');
+const config = require('./config/index.js');
 
 /**
- * Cognitive Triangulation MCP Server
- * Provides code analysis and knowledge graph building capabilities
+ * MCP Server for Cognitive Triangulation Pipeline
+ * Implements JSON-RPC 2.0 protocol over stdio
  */
-class CognitiveTriangulationMCP {
+class MCPServer {
   constructor() {
-    this.server = new Server({
-      name: 'cognitive-triangulation',
-      version: '1.0.0',
-      description: 'Automated code analysis and knowledge graph construction'
-    });
-
-    this.setupTools();
+    this.tools = new Map();
     this.activeAnalyses = new Map();
+    this.setupTools();
   }
 
   setupTools() {
-    // Tool: analyzeCodebase
-    this.server.addTool({
-      name: 'analyzeCodebase',
+    // Register all available tools
+    this.tools.set('analyzeCodebase', {
       description: 'Analyze an entire codebase and build a knowledge graph',
       inputSchema: {
         type: 'object',
@@ -60,14 +60,10 @@ class CognitiveTriangulationMCP {
         },
         required: ['projectPath']
       },
-      handler: async (input) => {
-        return this.analyzeCodebase(input.projectPath, input.options || {});
-      }
+      handler: (input) => this.analyzeCodebase(input.projectPath, input.options || {})
     });
 
-    // Tool: buildKnowledgeGraph
-    this.server.addTool({
-      name: 'buildKnowledgeGraph',
+    this.tools.set('buildKnowledgeGraph', {
       description: 'Build or update the knowledge graph from analyzed data',
       inputSchema: {
         type: 'object',
@@ -88,14 +84,10 @@ class CognitiveTriangulationMCP {
         },
         required: ['projectId']
       },
-      handler: async (input) => {
-        return this.buildKnowledgeGraph(input.projectId, input.options || {});
-      }
+      handler: (input) => this.buildKnowledgeGraph(input.projectId, input.options || {})
     });
 
-    // Tool: queryRelationships
-    this.server.addTool({
-      name: 'queryRelationships',
+    this.tools.set('queryRelationships', {
       description: 'Query relationships in the knowledge graph',
       inputSchema: {
         type: 'object',
@@ -128,14 +120,10 @@ class CognitiveTriangulationMCP {
         },
         required: ['query']
       },
-      handler: async (input) => {
-        return this.queryRelationships(input.query);
-      }
+      handler: (input) => this.queryRelationships(input.query)
     });
 
-    // Tool: extractPOIs
-    this.server.addTool({
-      name: 'extractPOIs',
+    this.tools.set('extractPOIs', {
       description: 'Extract Points of Interest from specific files',
       inputSchema: {
         type: 'object',
@@ -157,14 +145,10 @@ class CognitiveTriangulationMCP {
         },
         required: ['filePaths']
       },
-      handler: async (input) => {
-        return this.extractPOIs(input.filePaths, input.options || {});
-      }
+      handler: (input) => this.extractPOIs(input.filePaths, input.options || {})
     });
 
-    // Tool: cleanupGraph
-    this.server.addTool({
-      name: 'cleanupGraph',
+    this.tools.set('cleanupGraph', {
       description: 'Clean up orphaned nodes and relationships in the graph',
       inputSchema: {
         type: 'object',
@@ -185,12 +169,109 @@ class CognitiveTriangulationMCP {
         },
         required: ['projectId']
       },
-      handler: async (input) => {
-        return this.cleanupGraph(input.projectId, input.options || {});
-      }
+      handler: (input) => this.cleanupGraph(input.projectId, input.options || {})
     });
   }
 
+  async handleRequest(request) {
+    // JSON-RPC 2.0 request handling
+    if (!request.jsonrpc || request.jsonrpc !== '2.0') {
+      return this.createError(request.id, -32700, 'Parse error');
+    }
+
+    if (!request.method || typeof request.method !== 'string') {
+      return this.createError(request.id, -32600, 'Invalid request');
+    }
+
+    switch (request.method) {
+      case 'initialize':
+        return this.handleInitialize(request);
+      case 'tools/list':
+        return this.handleToolsList(request);
+      case 'tools/call':
+        return this.handleToolCall(request);
+      default:
+        return this.createError(request.id, -32601, 'Method not found');
+    }
+  }
+
+  async handleInitialize(request) {
+    return {
+      jsonrpc: '2.0',
+      id: request.id,
+      result: {
+        protocolVersion: '1.0',
+        capabilities: {
+          tools: {
+            enabled: true
+          }
+        },
+        serverInfo: {
+          name: 'cognitive-triangulation-mcp',
+          version: '1.0.0'
+        }
+      }
+    };
+  }
+
+  async handleToolsList(request) {
+    const tools = [];
+    for (const [name, tool] of this.tools) {
+      tools.push({
+        name,
+        description: tool.description,
+        inputSchema: tool.inputSchema
+      });
+    }
+
+    return {
+      jsonrpc: '2.0',
+      id: request.id,
+      result: { tools }
+    };
+  }
+
+  async handleToolCall(request) {
+    const { name, arguments: args } = request.params || {};
+    
+    if (!name || !this.tools.has(name)) {
+      return this.createError(request.id, -32602, 'Invalid params: unknown tool');
+    }
+
+    try {
+      const tool = this.tools.get(name);
+      const result = await tool.handler(args);
+      
+      return {
+        jsonrpc: '2.0',
+        id: request.id,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        }
+      };
+    } catch (error) {
+      logger.error(`Error executing tool ${name}:`, error);
+      return this.createError(request.id, -32603, `Internal error: ${error.message}`);
+    }
+  }
+
+  createError(id, code, message) {
+    return {
+      jsonrpc: '2.0',
+      id,
+      error: {
+        code,
+        message
+      }
+    };
+  }
+
+  // Tool implementations
   async analyzeCodebase(projectPath, options) {
     try {
       const analysisId = `analysis-${Date.now()}`;
@@ -215,9 +296,6 @@ class CognitiveTriangulationMCP {
       const analysis = this.activeAnalyses.get(analysisId);
       analysis.filesDiscovered = discoveredFiles.length;
       analysis.status = 'analyzing';
-
-      // Process files through the pipeline
-      // The workers will handle the rest automatically through the queue system
 
       return {
         analysisId,
@@ -365,35 +443,69 @@ class CognitiveTriangulationMCP {
   }
 
   async start() {
-    const transport = new StdioTransport();
-    await this.server.start(transport);
-    logger.info('Cognitive Triangulation MCP Server started');
+    logger.info('Starting MCP Server...');
+    
+    // Initialize database if needed
+    try {
+      await initializeDb();
+      logger.info('Database initialized');
+    } catch (error) {
+      logger.error('Failed to initialize database:', error);
+      // Continue anyway - database might already be initialized
+    }
+    
+    // Read from stdin line by line
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: false
+    });
+
+    rl.on('line', async (line) => {
+      try {
+        const request = JSON.parse(line);
+        const response = await this.handleRequest(request);
+        console.log(JSON.stringify(response));
+      } catch (error) {
+        const errorResponse = {
+          jsonrpc: '2.0',
+          id: null,
+          error: {
+            code: -32700,
+            message: 'Parse error'
+          }
+        };
+        console.log(JSON.stringify(errorResponse));
+      }
+    });
+
+    logger.info('MCP Server started and listening on stdio');
   }
 
   async stop() {
     // Clean up resources
     await queueManager.closeConnections();
     await neo4jDriver.close();
-    logger.info('Cognitive Triangulation MCP Server stopped');
+    logger.info('MCP Server stopped');
   }
 }
 
-// Start the server
-const mcpServer = new CognitiveTriangulationMCP();
+// Create and start the server
+const server = new MCPServer();
 
 // Handle shutdown gracefully
 process.on('SIGINT', async () => {
-  await mcpServer.stop();
+  await server.stop();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  await mcpServer.stop();
+  await server.stop();
   process.exit(0);
 });
 
 // Start the server
-mcpServer.start().catch(error => {
+server.start().catch(error => {
   logger.error('Failed to start MCP server:', error);
   process.exit(1);
 });

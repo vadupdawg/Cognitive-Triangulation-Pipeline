@@ -1,0 +1,37 @@
+#!/usr/bin/env node
+
+/**
+ * Global executable for Cognitive Triangulation MCP Server
+ * This script is used when the package is installed globally
+ */
+
+const path = require('path');
+const { spawn } = require('child_process');
+
+// Find the MCP server script relative to this bin file
+const mcpServerPath = path.join(__dirname, '..', 'src', 'mcp-server-simple.js');
+
+// Start the MCP server as a child process
+const mcpServer = spawn('node', [mcpServerPath], {
+  stdio: 'inherit',
+  env: process.env
+});
+
+// Handle process termination
+mcpServer.on('error', (error) => {
+  console.error('Failed to start MCP server:', error);
+  process.exit(1);
+});
+
+mcpServer.on('exit', (code) => {
+  process.exit(code);
+});
+
+// Forward signals to the child process
+process.on('SIGINT', () => {
+  mcpServer.kill('SIGINT');
+});
+
+process.on('SIGTERM', () => {
+  mcpServer.kill('SIGTERM');
+});

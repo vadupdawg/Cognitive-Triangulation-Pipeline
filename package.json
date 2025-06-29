@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "description": "Automated Backend Analysis and Code Knowledge - Cognitive Triangulation Architecture with MCP Server Integration",
   "main": "src/main.js",
-  "type": "module",
+  "bin": {
+    "cognitive-triangulation-mcp": "./bin/cognitive-triangulation-mcp"
+  },
   "mcp": {
-    "server": "src/mcp-server.js",
+    "server": "src/mcp-server-simple.js",
     "tools": [
       "analyzeCodebase",
       "buildKnowledgeGraph",
@@ -17,7 +19,7 @@
   "scripts": {
     "start": "node src/main.js",
     "start:api": "node src/utils/pipelineApi.js",
-    "start:mcp": "node src/mcp-server.js",
+    "start:mcp": "node src/mcp-server-simple.js",
     "dev": "nodemon src/main.js",
     "dev:mcp": "nodemon src/mcp-server.js",
     "build": "echo 'No build step required for Node.js project'",
@@ -36,8 +38,6 @@
     "prepublishOnly": "npm test && npm run lint"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^0.1.0",
-    "@modelcontextprotocol/types": "^0.1.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "axios": "^1.6.2",

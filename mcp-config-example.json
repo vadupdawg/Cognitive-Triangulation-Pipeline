@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "cognitive-triangulation": {
+      "command": "node",
+      "args": ["REPLACE_WITH_ABSOLUTE_PATH/src/mcp-server-simple.js"],
+      "description": "Cognitive Triangulation Pipeline - Analyze code structure with multi-perspective LLM analysis",
+      "env": {
+        "SQLITE_DB_PATH": "./cognitive-triangulation.db",
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}
