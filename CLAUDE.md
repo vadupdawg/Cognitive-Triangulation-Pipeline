@@ -5,7 +5,48 @@
 - `npm run test`: Run the full test suite
 - `npm run lint`: Run ESLint and format checks
 - `npm run typecheck`: Run TypeScript type checking
+- `npm run start:mcp`: Start the MCP server for testing
 - `./claude-flow --help`: Show all available commands
+
+## 🆕 Cognitive Triangulation MCP Server
+
+This project includes a global MCP server that's automatically available in all Claude Code sessions!
+
+### Available MCP Tools
+
+When using Claude Code, you have access to these Cognitive Triangulation tools:
+
+1. **`analyzeCodebase`** - Analyze an entire codebase and build a knowledge graph
+   - Example: "Use cognitive triangulation to analyze this project"
+   - Example: "Map out the structure of this codebase"
+
+2. **`extractPOIs`** - Extract Points of Interest from specific files
+   - Example: "Extract POIs from the src directory using cognitive triangulation"
+   - Example: "Show me all functions and classes in these files"
+
+### Using in Claude Code
+
+Simply ask Claude to use cognitive triangulation:
+
+```
+"Analyze this project structure using cognitive triangulation"
+"Use cognitive triangulation to understand how the authentication system works"
+"Show me the relationships between components using cognitive triangulation"
+"Extract all POIs from the API endpoints"
+```
+
+### Integration with Claude Flow
+
+You can combine the MCP server with Claude Flow commands:
+
+```bash
+# Use cognitive triangulation in SPARC modes
+./claude-flow sparc run analyzer "Use cognitive triangulation to identify code smells"
+./claude-flow sparc run architect "Design improvements based on cognitive triangulation analysis"
+
+# Store findings in memory
+./claude-flow memory store "code_analysis" "Results from cognitive triangulation analysis"
+```
 
 ## Claude-Flow Complete Command Reference
 
@@ -242,5 +283,41 @@ Task("Backend Team", "Implement APIs according to Memory specifications");
 - **All swarm operations include automatic batch tool coordination**
 - **Monitor progress** with TodoRead during long-running operations
 - **Enable parallel execution** with --parallel flags for maximum efficiency
+- **Use Cognitive Triangulation MCP** for deep code analysis and understanding
 
-This configuration ensures optimal use of Claude Code's batch tools for swarm orchestration and parallel task execution with full Claude-Flow capabilities.
+## Enhanced Workflows with Cognitive Triangulation MCP
+
+### Code Understanding Workflow
+```bash
+# First, analyze the codebase structure
+"Use cognitive triangulation to map out this project"
+
+# Then use Claude Flow for specific tasks
+./claude-flow sparc run coder "Refactor the authentication module based on the cognitive triangulation analysis"
+
+# Store the analysis for future reference
+./claude-flow memory store "project_structure" "Cognitive triangulation analysis results"
+```
+
+### Debugging Workflow
+```bash
+# Identify problem areas
+"Use cognitive triangulation to find complex relationships in the payment module"
+
+# Debug with context
+./claude-flow sparc run debugger "Fix the circular dependencies identified by cognitive triangulation"
+```
+
+### Architecture Review Workflow
+```bash
+# Get a full picture
+"Analyze the entire architecture using cognitive triangulation"
+
+# Review and improve
+./claude-flow sparc run architect "Propose improvements based on cognitive triangulation findings"
+
+# Document decisions
+./claude-flow memory store "architecture_review" "Improvements suggested by cognitive triangulation"
+```
+
+This configuration ensures optimal use of Claude Code's batch tools for swarm orchestration and parallel task execution with full Claude-Flow capabilities, now enhanced with Cognitive Triangulation analysis.
