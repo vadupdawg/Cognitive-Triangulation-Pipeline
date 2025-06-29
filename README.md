@@ -6,6 +6,26 @@ Welcome to a state-of-the-art, event-driven pipeline engineered to perform deep 
 
 This is not just a static analysis tool; it's a dynamic, scalable, and resilient platform for building a "living" model of your code's cognitive architecture.
 
+## 🆕 MCP Integration for Claude Code
+
+This project now includes an MCP (Model Context Protocol) server that integrates seamlessly with Claude Code! 
+
+### Quick Start with Claude Code
+
+```bash
+# Install globally
+npm install -g git+https://github.com/vadupdawg/Cognitive-Triangulation-Pipeline.git
+
+# Configure Claude Code  
+./setup-global-mcp.sh
+
+# Use in any Claude Code session
+claude
+> "Analyze this project using cognitive triangulation"
+```
+
+See [MCP_INTEGRATION.md](MCP_INTEGRATION.md) and [GLOBAL_INSTALL.md](GLOBAL_INSTALL.md) for detailed setup instructions.
+
 ## Table of Contents
 
 - [Overview](#overview)
