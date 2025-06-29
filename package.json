@@ -1,11 +1,28 @@
 {
-  "name": "aback",
+  "name": "cognitive-triangulation-mcp",
   "version": "1.0.0",
-  "description": "Automated Backend Analysis and Code Knowledge - Cognitive Triangulation Architecture",
+  "description": "Automated Backend Analysis and Code Knowledge - Cognitive Triangulation Architecture with MCP Server Integration",
   "main": "src/main.js",
+  "type": "module",
+  "mcp": {
+    "server": "src/mcp-server.js",
+    "tools": [
+      "analyzeCodebase",
+      "buildKnowledgeGraph",
+      "queryRelationships",
+      "extractPOIs",
+      "cleanupGraph"
+    ]
+  },
   "scripts": {
     "start": "node src/main.js",
     "start:api": "node src/utils/pipelineApi.js",
+    "start:mcp": "node src/mcp-server.js",
+    "dev": "nodemon src/main.js",
+    "dev:mcp": "nodemon src/mcp-server.js",
+    "build": "echo 'No build step required for Node.js project'",
+    "lint": "eslint src/ --ext .js",
+    "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:e2e": "jest --runInBand",
     "test:watch": "jest --watch",
@@ -14,9 +31,13 @@
     "test:cognitive": "node run-tests.js",
     "check:polyglot": "node check-polyglot-results.js",
     "init-db": "node src/utils/initializeDb.js",
-    "test:neo4j:ip": "cross-env NEO4J_URI=bolt://127.0.0.1:7687 node test_neo4j_connection.js"
+    "test:neo4j:ip": "cross-env NEO4J_URI=bolt://127.0.0.1:7687 node test_neo4j_connection.js",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm test && npm run lint"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^0.1.0",
+    "@modelcontextprotocol/types": "^0.1.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "axios": "^1.6.2",
@@ -36,9 +57,39 @@
     "ws": "^8.14.2"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "cross-env": "^7.0.3",
+    "eslint": "^8.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-prettier": "^5.0.0",
     "jest": "^29.7.0",
     "mock-fs": "^5.5.0",
+    "nodemon": "^3.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.0.0",
     "zod": "^3.25.67"
-  }
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "code-analysis",
+    "knowledge-graph",
+    "neo4j",
+    "cognitive-triangulation",
+    "llm",
+    "ai"
+  ],
+  "author": "Cognitive Triangulation Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/cognitive-triangulation-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/cognitive-triangulation-mcp/issues"
+  },
+  "homepage": "https://github.com/yourusername/cognitive-triangulation-mcp#readme"
 }

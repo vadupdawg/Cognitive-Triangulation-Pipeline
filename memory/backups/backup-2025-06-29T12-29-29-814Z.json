@@ -1,0 +1,295 @@
+{
+  "timestamp": "2025-06-29T12:29:29.814Z",
+  "version": "1.0",
+  "entries": [
+    {
+      "id": "entry_mchn5k9x_plb6l0dx9",
+      "key": "swarm-auto-centralized-1751199587202/analyst/component_mapping",
+      "value": "{\"overview\":\"Cognitive Triangulation Pipeline - Event-driven code analysis system that builds knowledge graphs using LLMs\",\"core_architecture\":{\"pattern\":\"Event-driven, queue-based microservices architecture\",\"databases\":{\"sqlite\":\"Transient operational datastore for POIs, relationships, outbox pattern\",\"neo4j\":\"Persistent knowledge graph storage\",\"redis\":\"Queue management and caching via BullMQ\"},\"messaging\":\"BullMQ for reliable job queuing, transactional outbox for guaranteed delivery\"},\"key_components\":{\"agents\":[{\"name\":\"EntityScout\",\"purpose\":\"File discovery and job creation\"},{\"name\":\"GraphBuilder\",\"purpose\":\"Neo4j graph construction from relationships\"},{\"name\":\"RelationshipResolver\",\"purpose\":\"Multi-pass relationship extraction orchestration\"},{\"name\":\"SelfCleaningAgent\",\"purpose\":\"Graph maintenance for deleted files\"}],\"workers\":[{\"name\":\"FileAnalysisWorker\",\"purpose\":\"Extract POIs from files using LLM\"},{\"name\":\"DirectoryResolutionWorker\",\"purpose\":\"Generate directory summaries\"},{\"name\":\"RelationshipResolutionWorker\",\"purpose\":\"Find relationships between POIs\"},{\"name\":\"ValidationWorker\",\"purpose\":\"Collect and validate evidence\"},{\"name\":\"ReconciliationWorker\",\"purpose\":\"Calculate final confidence scores\"}],\"services\":[{\"name\":\"ConfidenceScoringService\",\"purpose\":\"Core cognitive triangulation algorithm\"},{\"name\":\"TransactionalOutboxPublisher\",\"purpose\":\"Reliable event publishing\"},{\"name\":\"PipelineApiService\",\"purpose\":\"REST/WebSocket API for external control\"}]},\"cognitive_triangulation_features\":{\"multi_pass_analysis\":[\"Deterministic pass for obvious relationships\",\"Intra-file LLM analysis\",\"Intra-directory LLM analysis\",\"Global architecture analysis\"],\"confidence_scoring\":\"Evidence-based scoring with agreement boosts and disagreement penalties\",\"llm_integration\":\"DeepSeek API with custom sanitization and retry logic\"}}",
+      "type": "object",
+      "namespace": "default",
+      "tags": [],
+      "metadata": {},
+      "owner": "system",
+      "accessLevel": "shared",
+      "createdAt": "2025-06-29T12:23:33.861Z",
+      "updatedAt": "2025-06-29T12:23:33.861Z",
+      "lastAccessedAt": "2025-06-29T12:23:33.861Z",
+      "version": 1,
+      "size": 2046,
+      "compressed": true,
+      "checksum": "3c31920df9217865c0b27184d12666c811855da99c485cdc42b32b3717cb92cb",
+      "references": [],
+      "dependencies": []
+    },
+    {
+      "id": "entry_mchn6000_sq19177e5",
+      "key": "swarm-auto-centralized-1751199587202/analyst/mcp_integration_points",
+      "value": "{\"api_interfaces\":{\"pipeline_api\":{\"type\":\"REST/WebSocket\",\"endpoints\":[\"POST /api/pipeline/start - Start analysis on target directory\",\"GET /api/pipeline/status/:id - Get pipeline status\",\"GET /api/pipeline/active - List active pipelines\",\"POST /api/pipeline/stop/:id - Stop pipeline\",\"DELETE /api/pipeline/clear/:id - Clear pipeline history\"],\"websocket_events\":[\"initial_state\",\"pipeline_update\"]},\"queue_interfaces\":{\"bullmq_queues\":[\"file-analysis-queue\",\"directory-resolution-queue\",\"relationship-resolution-queue\",\"validation-queue\",\"reconciliation-queue\"],\"job_data_contracts\":\"Well-defined JSON payloads for each queue\"}},\"modular_boundaries\":{\"agents\":\"High-level orchestrators with clear single responsibilities\",\"workers\":\"Queue-driven processors with isolated concerns\",\"services\":\"Stateless utilities and core algorithms\",\"utils\":\"Database drivers, queue managers, shared utilities\"},\"external_dependencies\":{\"databases\":[\"SQLite (better-sqlite3)\",\"Neo4j (neo4j-driver)\",\"Redis (ioredis/BullMQ)\"],\"llm\":\"DeepSeek API (custom client implementation)\",\"file_system\":\"Node.js fs module for code analysis\"},\"data_flow_patterns\":{\"input\":\"Target directory path\",\"processing\":\"Event-driven queue processing with transactional outbox\",\"output\":\"Neo4j knowledge graph with confidence-scored relationships\"}}",
+      "type": "object",
+      "namespace": "default",
+      "tags": [],
+      "metadata": {},
+      "owner": "system",
+      "accessLevel": "shared",
+      "createdAt": "2025-06-29T12:23:54.240Z",
+      "updatedAt": "2025-06-29T12:23:54.240Z",
+      "lastAccessedAt": "2025-06-29T12:23:54.240Z",
+      "version": 1,
+      "size": 1436,
+      "compressed": true,
+      "checksum": "4393dd81271c1c8ae96ca3b4b8c19d3b102aab312f6c903070b5f69d5f6fe731",
+      "references": [],
+      "dependencies": []
+    },
+    {
+      "id": "entry_mchn6gij_t27321raf",
+      "key": "swarm-auto-centralized-1751199587202/analyst/refactoring_needs",
+      "value": "{\"current_modularity_assessment\":{\"strengths\":[\"Clear separation between agents, workers, and services\",\"Event-driven architecture with loose coupling\",\"Well-defined queue interfaces\",\"Stateless service design (ConfidenceScoringService)\"],\"weaknesses\":[\"Tight coupling to specific databases (SQLite, Neo4j, Redis)\",\"Workers instantiated directly in main.js\",\"Configuration spread across environment variables\",\"LLM client hardcoded to DeepSeek\"]},\"mcp_conversion_strategy\":{\"phase_1_core_tools\":[{\"tool\":\"analyze_directory\",\"description\":\"Discover and analyze files in a directory\",\"maps_to\":\"EntityScout + FileAnalysisWorker\"},{\"tool\":\"extract_relationships\",\"description\":\"Extract relationships between code entities\",\"maps_to\":\"RelationshipResolver + multi-pass analysis\"},{\"tool\":\"calculate_confidence\",\"description\":\"Calculate confidence scores for relationships\",\"maps_to\":\"ConfidenceScoringService\"},{\"tool\":\"build_knowledge_graph\",\"description\":\"Construct Neo4j graph from relationships\",\"maps_to\":\"GraphBuilder\"}],\"phase_2_pipeline_tools\":[{\"tool\":\"start_pipeline\",\"description\":\"Start full analysis pipeline\",\"maps_to\":\"CognitiveTriangulationPipeline.run()\"},{\"tool\":\"get_pipeline_status\",\"description\":\"Monitor pipeline progress\",\"maps_to\":\"PipelineApiService status endpoints\"}],\"phase_3_advanced_tools\":[{\"tool\":\"query_knowledge_graph\",\"description\":\"Query the generated Neo4j graph\",\"new_functionality\":true},{\"tool\":\"incremental_update\",\"description\":\"Update graph for changed files only\",\"maps_to\":\"SelfCleaningAgent (extend for updates)\"}]},\"refactoring_priorities\":[\"Extract database interfaces to allow pluggable implementations\",\"Create factory pattern for worker instantiation\",\"Centralize configuration management\",\"Abstract LLM client interface for multiple providers\",\"Add dependency injection for better testability\"]}",
+      "type": "object",
+      "namespace": "default",
+      "tags": [],
+      "metadata": {},
+      "owner": "system",
+      "accessLevel": "shared",
+      "createdAt": "2025-06-29T12:24:15.643Z",
+      "updatedAt": "2025-06-29T12:24:15.643Z",
+      "lastAccessedAt": "2025-06-29T12:24:15.643Z",
+      "version": 1,
+      "size": 2009,
+      "compressed": true,
+      "checksum": "b29b1cdfd3e5bd28456f5c8e134d9fc3b0d3e03a25f6c0df374836b108732493",
+      "references": [],
+      "dependencies": []
+    },
+    {
+      "id": "entry_mchn788d_sgotl0dw7",
+      "key": "swarm-auto-centralized-1751199587202/analyst/unique_features_analysis",
+      "value": "{\"cognitive_triangulation_unique_value\":{\"multi_pass_evidence_collection\":{\"description\":\"Multiple independent analysis passes build confidence in relationships\",\"passes\":[\"Deterministic (rule-based)\",\"Intra-file LLM analysis\",\"Intra-directory LLM analysis\",\"Global architecture LLM analysis\"],\"benefit\":\"Reduces LLM hallucinations through cross-validation\"},\"confidence_scoring_algorithm\":{\"description\":\"Mathematical model for aggregating evidence\",\"formula\":\"Agreement boost: score + (1-score)*0.2, Disagreement penalty: score*0.5\",\"benefit\":\"Quantifiable trust in discovered relationships\"},\"transactional_outbox_pattern\":{\"description\":\"Guarantees at-least-once delivery in distributed processing\",\"benefit\":\"Extreme reliability even with system failures\"},\"semantic_code_understanding\":{\"description\":\"LLM-powered deep analysis beyond syntax\",\"benefit\":\"Understands intent, not just structure\"}},\"claude_flow_integration_opportunities\":{\"sparc_mode_integration\":[\"coder mode: Use knowledge graph to understand code dependencies before modifications\",\"analyzer mode: Leverage cognitive triangulation for impact analysis\",\"architect mode: Query graph for architectural patterns and violations\",\"reviewer mode: Use confidence scores to flag uncertain relationships\"],\"swarm_coordination\":[\"Multiple agents can query the same knowledge graph concurrently\",\"Graph serves as shared memory for code understanding\",\"Confidence scores help prioritize agent attention\"],\"memory_integration\":[\"Store high-confidence relationships in Claude Flow memory\",\"Cache directory summaries for faster re-analysis\",\"Track code evolution over time\"],\"workflow_automation\":[\"Trigger analysis on code changes\",\"Auto-generate documentation from graph\",\"Identify refactoring opportunities\"]},\"mcp_tool_recommendations\":{\"essential_tools\":[\"analyze_codebase: Full pipeline execution\",\"query_code_graph: Cypher queries on Neo4j\",\"get_code_relationships: Find connections between entities\",\"calculate_impact: Analyze change propagation\"],\"advanced_tools\":[\"monitor_code_quality: Track graph metrics over time\",\"suggest_refactoring: AI-powered recommendations\",\"validate_architecture: Check against defined patterns\"]}}",
+      "type": "object",
+      "namespace": "default",
+      "tags": [],
+      "metadata": {},
+      "owner": "system",
+      "accessLevel": "shared",
+      "createdAt": "2025-06-29T12:24:51.565Z",
+      "updatedAt": "2025-06-29T12:24:51.565Z",
+      "lastAccessedAt": "2025-06-29T12:24:51.565Z",
+      "version": 1,
+      "size": 2336,
+      "compressed": true,
+      "checksum": "732a6398182815c4c02edd0400a7b6a1faacceb221dde47c86c0d09263a8de25",
+      "references": [],
+      "dependencies": []
+    },
+    {
+      "id": "entry_mchn7shp_c5g21k8yg",
+      "key": "swarm-auto-centralized-1751199587202/analyst/final_report",
+      "value": "{\"executive_summary\":\"The Cognitive Triangulation Pipeline is a sophisticated event-driven system for semantic code analysis. It uses multiple LLM-powered analysis passes to build high-confidence knowledge graphs, making it ideal for MCP conversion to expose advanced code understanding capabilities.\",\"key_findings\":{\"architecture\":\"Event-driven microservices with BullMQ queues, transactional outbox pattern, and polyglot persistence (SQLite/Neo4j/Redis)\",\"unique_value\":\"Multi-pass cognitive triangulation reduces LLM hallucinations and provides confidence-scored relationships\",\"modularity\":\"Good separation of concerns with agents, workers, and services, but needs refactoring for database abstraction\",\"integration_readiness\":\"Well-defined API endpoints and queue interfaces make MCP wrapping feasible\"},\"mcp_implementation_roadmap\":{\"phase_1\":{\"timeline\":\"Week 1-2\",\"deliverables\":[\"Basic MCP server setup\",\"analyze_directory tool wrapping EntityScout\",\"get_relationships tool for simple queries\",\"Database interface abstraction layer\"]},\"phase_2\":{\"timeline\":\"Week 3-4\",\"deliverables\":[\"Full pipeline execution tool\",\"Real-time status monitoring via MCP\",\"Advanced Cypher query tool\",\"Configuration management refactoring\"]},\"phase_3\":{\"timeline\":\"Week 5-6\",\"deliverables\":[\"Claude Flow integration hooks\",\"Incremental analysis capabilities\",\"Cross-codebase relationship discovery\",\"Performance optimization for large codebases\"]}},\"technical_recommendations\":[\"Implement dependency injection for better testability\",\"Create adapter pattern for LLM providers beyond DeepSeek\",\"Add caching layer for repeated analyses\",\"Implement streaming for large result sets\",\"Add GraphQL endpoint for flexible querying\"],\"risk_assessment\":{\"technical_risks\":[\"Database dependencies may complicate MCP deployment\",\"Queue-based architecture requires Redis availability\",\"LLM costs can be significant for large codebases\"],\"mitigation_strategies\":[\"Implement in-memory alternatives for development\",\"Add queue abstraction layer\",\"Implement smart caching and incremental analysis\"]},\"conclusion\":\"The Cognitive Triangulation Pipeline offers unique value through its evidence-based approach to code analysis. With targeted refactoring, it can become a powerful MCP tool that enhances Claude Flow's code understanding capabilities across all SPARC modes.\"}",
+      "type": "object",
+      "namespace": "default",
+      "tags": [],
+      "metadata": {},
+      "owner": "system",
+      "accessLevel": "shared",
+      "createdAt": "2025-06-29T12:25:17.821Z",
+      "updatedAt": "2025-06-29T12:25:17.821Z",
+      "lastAccessedAt": "2025-06-29T12:25:17.821Z",
+      "version": 1,
+      "size": 2481,
+      "compressed": true,
+      "checksum": "2d4ad057d00582bbd0f02f517e32eb16cdcb22f8151397c2e236520909f00293",
+      "references": [],
+      "dependencies": []
+    },
+    {
+      "id": "entry_mchn8j03_lztksziyk",
+      "key": "swarm-auto-centralized-1751199587202/analyst/system_dependencies",
+      "value": "{\"required_services\":{\"redis\":{\"purpose\":\"BullMQ queue management and caching\",\"default_url\":\"redis://localhost:6379\",\"critical\":true},\"neo4j\":{\"purpose\":\"Knowledge graph storage\",\"default_url\":\"bolt://localhost:7687\",\"credentials\":\"neo4j/password (must change in production)\",\"critical\":true},\"sqlite\":{\"purpose\":\"Transient operational data and transactional outbox\",\"default_path\":\"./db.sqlite\",\"critical\":true},\"deepseek_api\":{\"purpose\":\"LLM for code analysis\",\"env_var\":\"DEEPSEEK_API_KEY\",\"critical\":true}},\"queue_architecture\":{\"total_queues\":9,\"main_queues\":[\"file-analysis-queue\",\"directory-resolution-queue\",\"relationship-resolution-queue\",\"reconciliation-queue\"],\"coordination_queues\":[\"directory-aggregation-queue\",\"global-resolution-queue\",\"relationship-validated-queue\"],\"error_handling\":\"failed-jobs queue for retry logic\"},\"deployment_considerations\":{\"docker_compose_needed\":\"Redis and Neo4j services\",\"environment_variables\":\"Must configure API keys and database credentials\",\"initialization\":\"Run npm run init-db before first use\",\"api_server\":\"Starts on port 3002 by default\"}}",
+      "type": "object",
+      "namespace": "default",
+      "tags": [],
+      "metadata": {},
+      "owner": "system",
+      "accessLevel": "shared",
+      "createdAt": "2025-06-29T12:25:52.179Z",
+      "updatedAt": "2025-06-29T12:25:52.179Z",
+      "lastAccessedAt": "2025-06-29T12:25:52.179Z",
+      "version": 1,
+      "size": 1223,
+      "compressed": true,
+      "checksum": "9a4b3fc3bd552009b12b5cadb410d91ec4a675de2b6ff2b6aa68212d8a726af4",
+      "references": [],
+      "dependencies": []
+    },
+    {
+      "id": "entry_mchncgfp_2q358agtl",
+      "key": "swarm-auto-centralized-1751199587202/architect/mcp-architecture-decisions",
+      "value": "\"# Cognitive Triangulation MCP Server Architecture Decisions\\n\\n## Date: 2025-01-03\\n## Architect: Claude (AI Solution Architect)\\n## Project: Cognitive Triangulation Pipeline MCP Server\\n\\n## Executive Summary\\n\\nThis document captures all architectural decisions made for transforming the Cognitive Triangulation Pipeline into a modular MCP (Model Context Protocol) server that can operate standalone or integrate with Claude Code/Flow systems.\\n\\n## Key Architectural Decisions\\n\\n### 1. Modular Architecture Pattern\\n**Decision**: Adopt a layered, modular architecture with clear separation of concerns.\\n**Rationale**: \\n- Enables independent development and testing of components\\n- Allows the system to work standalone or as part of Claude Code/Flow\\n- Facilitates plugin development and third-party extensions\\n\\n**Layers**:\\n1. MCP Protocol Layer - Handles protocol communication\\n2. Core Modules Layer - Business logic and analysis engine\\n3. Plugin System Layer - Extensibility framework\\n4. Resource Management Layer - Database, queue, and cache management\\n\\n### 2. Session-Based Analysis\\n**Decision**: Implement session-based project analysis with unique session IDs.\\n**Rationale**:\\n- Supports multiple concurrent project analyses\\n- Enables stateful interactions across multiple MCP tool calls\\n- Allows for progress tracking and incremental results\\n- Facilitates resource cleanup and management\\n\\n### 3. In-Memory Database for Sessions\\n**Decision**: Use SQLite in-memory databases for analysis sessions.\\n**Rationale**:\\n- Provides isolation between different analysis sessions\\n- Eliminates disk I/O for temporary analysis data\\n- Simplifies cleanup (database destroyed when session ends)\\n- Maintains compatibility with existing pipeline code\\n\\n### 4. Plugin System Architecture\\n**Decision**: Implement a typed plugin system with four plugin categories.\\n**Plugin Types**:\\n- Analyzer Plugins - Language-specific code analysis\\n- Detector Plugins - Framework and project type detection\\n- Transformer Plugins - Graph and data transformation\\n- Validator Plugins - Code quality and compliance checks\\n\\n**Rationale**:\\n- Extends language support without modifying core\\n- Enables community contributions\\n- Allows domain-specific analysis capabilities\\n- Maintains performance through plugin isolation\\n\\n### 5. Transport Abstraction\\n**Decision**: Support multiple transport mechanisms (stdio, websocket, TCP).\\n**Rationale**:\\n- stdio for CLI integration with Claude\\n- WebSocket for web-based clients\\n- TCP for distributed deployments\\n- Future-proofs the architecture\\n\\n### 6. Tool-Based API Design\\n**Decision**: Expose capabilities through discrete MCP tools rather than a monolithic API.\\n**Tools**:\\n- analyze_project - Full project analysis\\n- query_entities - Entity search and retrieval\\n- find_definition - Code navigation\\n- get_project_summary - High-level project insights\\n\\n**Rationale**:\\n- Aligns with MCP protocol design\\n- Enables granular permissions\\n- Facilitates incremental feature adoption\\n- Simplifies client implementation\\n\\n### 7. Existing Pipeline Integration\\n**Decision**: Wrap existing CognitiveTriangulationPipeline rather than rewrite.\\n**Rationale**:\\n- Preserves proven analysis logic\\n- Reduces development time and risk\\n- Maintains backward compatibility\\n- Allows gradual refactoring\\n\\n### 8. TypeScript Interfaces\\n**Decision**: Define comprehensive TypeScript interfaces for all components.\\n**Rationale**:\\n- Provides strong typing for plugin developers\\n- Documents expected data structures\\n- Enables better IDE support\\n- Facilitates API versioning\\n\\n### 9. Event-Driven Plugin Communication\\n**Decision**: Use event bus for plugin coordination.\\n**Rationale**:\\n- Loose coupling between plugins\\n- Enables plugin chains and workflows\\n- Facilitates debugging and monitoring\\n- Supports async plugin operations\\n\\n### 10. Resource Pooling Strategy\\n**Decision**: Implement connection pooling for databases and queues.\\n**Rationale**:\\n- Improves performance under load\\n- Manages resource limits effectively\\n- Enables graceful degradation\\n- Simplifies configuration management\\n\\n## Implementation Priorities\\n\\n1. **Phase 1**: Core MCP server with stdio transport\\n2. **Phase 2**: Built-in language plugins (JS, Python, Java)\\n3. **Phase 3**: WebSocket transport and web UI\\n4. **Phase 4**: Plugin marketplace and community tools\\n5. **Phase 5**: Distributed deployment support\\n\\n## Security Considerations\\n\\n1. **Input Validation**: All file paths and queries validated\\n2. **Plugin Sandboxing**: Plugins run in isolated contexts\\n3. **Resource Limits**: Memory and CPU usage constraints\\n4. **Access Control**: Project-level permissions\\n5. **Audit Logging**: All operations logged for compliance\\n\\n## Performance Optimizations\\n\\n1. **Incremental Analysis**: Only analyze changed files\\n2. **Result Caching**: Cache by file content hash\\n3. **Parallel Processing**: Worker pool for analysis\\n4. **Lazy Loading**: Load graph data on demand\\n5. **Streaming Results**: Support for large datasets\\n\\n## Deployment Models\\n\\n### 1. Standalone CLI\\n```bash\\nnpx cognitive-mcp serve --transport stdio\\n```\\n\\n### 2. Docker Container\\n```bash\\ndocker run -v ./project:/workspace cognitive-mcp\\n```\\n\\n### 3. Embedded Library\\n```javascript\\nconst { createMCPServer } = require(\\\"cognitive-mcp\\\");\\n```\\n\\n### 4. Claude Code Integration\\nAutomatic discovery and registration with Claude Code\\n\\n## Future Enhancements\\n\\n1. **Real-time Analysis**: File watching and incremental updates\\n2. **AI Enhancement**: Improved LLM integration for analysis\\n3. **Visual Tools**: Web-based graph visualization\\n4. **API Gateway**: REST and GraphQL APIs\\n5. **Cloud Native**: Kubernetes operators and scaling\\n\\n## Risk Mitigation\\n\\n1. **Backward Compatibility**: Maintain existing pipeline interfaces\\n2. **Plugin Stability**: Version locking and compatibility matrix\\n3. **Performance Regression**: Comprehensive benchmarking suite\\n4. **Security Vulnerabilities**: Regular security audits\\n5. **Scalability Limits**: Load testing and profiling\\n\\n## Success Metrics\\n\\n1. **Adoption**: Number of projects analyzed\\n2. **Performance**: Analysis time per KLOC\\n3. **Accuracy**: Relationship detection precision\\n4. **Extensibility**: Number of community plugins\\n5. **Reliability**: Uptime and error rates\\n\\n## Conclusion\\n\\nThis modular architecture provides a solid foundation for exposing the Cognitive Triangulation Pipeline capabilities through the MCP protocol while maintaining flexibility for future enhancements and community contributions.\"",
+      "type": "string",
+      "namespace": "default",
+      "tags": [],
+      "metadata": {},
+      "owner": "system",
+      "accessLevel": "shared",
+      "createdAt": "2025-06-29T12:28:55.477Z",
+      "updatedAt": "2025-06-29T12:28:55.477Z",
+      "lastAccessedAt": "2025-06-29T12:28:55.477Z",
+      "version": 1,
+      "size": 6836,
+      "compressed": true,
+      "checksum": "f0f0d0becda8eff8cdd0b2fd2d3e8e3dd3f7d5831b55556dfceeaf63be99be55",
+      "references": [],
+      "dependencies": []
+    },
+    {
+      "id": "entry_mchnd6ok_govdj3xe7",
+      "key": "swarm-auto-centralized-1751199587202/architect/mcp-interfaces-summary",
+      "value": "\"# MCP Server Interface Definitions Summary\\n\\n## Core Interfaces\\n\\n### MCPMessage\\n- Standard JSON-RPC 2.0 message format\\n- Supports request/response and notification patterns\\n- Error handling with structured error objects\\n\\n### ProjectMapper\\nPrimary interface for project analysis capabilities:\\n- analyzeProject() - Full project analysis\\n- getEntityGraph() - Retrieve entity relationship graph  \\n- queryRelationships() - Search relationships\\n- getProjectSummary() - High-level project metrics\\n- watchProject() - Real-time file monitoring\\n\\n### AnalysisEngine\\nOrchestrates the analysis pipeline:\\n- startAnalysis() - Begin async analysis\\n- getAnalysisStatus() - Track progress\\n- cancelAnalysis() - Stop running analysis\\n- getResults() - Retrieve completed results\\n\\n### Entity Types\\nComprehensive entity type system:\\n- Code entities: class, interface, function, variable, constant\\n- Structure entities: module, package, component, service\\n- Infrastructure: api_endpoint, database_schema, configuration\\n\\n### Relationship Types\\nRich relationship modeling:\\n- Code relationships: imports, exports, extends, implements, uses, calls\\n- Structural: instantiates, configures, depends_on\\n- Quality: tests, documents\\n\\n### Plugin System\\nFour plugin categories with specific interfaces:\\n1. AnalyzerPlugin - Code analysis\\n2. DetectorPlugin - Project detection\\n3. TransformerPlugin - Data transformation\\n4. ValidatorPlugin - Code validation\\n\\n### Storage Adapters\\nAbstracted storage with transaction support:\\n- Entity CRUD operations\\n- Relationship management\\n- Query capabilities\\n- Transaction support\\n\\n### Transport Layer\\nMultiple transport options:\\n- StdioTransport - CLI integration\\n- WebSocketTransport - Web clients\\n- TCPTransport - Network communication\\n\\n## Key Design Patterns\\n\\n### 1. Session Management\\n- Unique session IDs for concurrent analyses\\n- Resource isolation per session\\n- Automatic cleanup on completion\\n\\n### 2. Plugin Context\\nPlugins receive rich context:\\n- Logger for structured logging\\n- Configuration management\\n- Storage access\\n- Event bus for coordination\\n- Cache for performance\\n\\n### 3. Query Interfaces\\nFlexible query capabilities:\\n- EntityQuery - Search entities by type, name, path\\n- RelationshipQuery - Find relationships by type, confidence\\n- GraphQuery - Graph traversal with depth control\\n\\n### 4. Error Handling\\nStructured error types:\\n- MCPError - Protocol-level errors\\n- AnalysisError - Analysis pipeline errors\\n- Contextual error information\\n\\n### 5. Metrics and Monitoring\\nComprehensive metrics:\\n- FileMetrics - LOC, complexity\\n- ProjectMetrics - Aggregate statistics\\n- Performance metrics - Timing, throughput\\n\\n## Integration Points\\n\\n### Claude Code/Flow\\n- MCP tool registration\\n- Session-based interactions\\n- Progress tracking\\n- Result streaming\\n\\n### Standalone Usage\\n- CLI invocation\\n- Library import\\n- Docker deployment\\n- REST API wrapper\\n\\n### Plugin Development\\n- NPM package structure\\n- TypeScript definitions\\n- Testing framework\\n- Publishing guidelines\"",
+      "type": "string",
+      "namespace": "default",
+      "tags": [],
+      "metadata": {},
+      "owner": "system",
+      "accessLevel": "shared",
+      "createdAt": "2025-06-29T12:29:29.492Z",
+      "updatedAt": "2025-06-29T12:29:29.492Z",
+      "lastAccessedAt": "2025-06-29T12:29:29.492Z",
+      "version": 1,
+      "size": 3220,
+      "compressed": true,
+      "checksum": "78f9e3fafdce8e7792d1f3919ba1a3bbcb3ca8a6e7948f90b6c52f8cc072781e",
+      "references": [],
+      "dependencies": []
+    },
+    {
+      "id": "entry_mchnd6xe_f8uls2l4f",
+      "key": "swarm-auto-centralized-1751199587202/devops/deployment-info",
+      "value": {
+        "project": "cognitive-triangulation-mcp",
+        "version": "1.0.0",
+        "repository": "https://github.com/yourusername/cognitive-triangulation-mcp",
+        "deployment_status": "ready",
+        "setup_completed": "2025-06-29T12:29:29Z",
+        "mcp_server": {
+          "file": "src/mcp-server.js",
+          "tools": [
+            "analyzeCodebase",
+            "buildKnowledgeGraph",
+            "queryRelationships",
+            "extractPOIs",
+            "cleanupGraph"
+          ],
+          "dependencies": [
+            "@modelcontextprotocol/server",
+            "@modelcontextprotocol/types"
+          ]
+        },
+        "github_workflows": [
+          "ci.yml",
+          "release.yml",
+          "security.yml"
+        ],
+        "documentation": {
+          "readme": "README.md with MCP usage instructions",
+          "integration_guide": "claude-flow-integration.md",
+          "package_json": "Updated with MCP configuration"
+        },
+        "next_steps": [
+          "Run npm install to install dependencies",
+          "Configure environment variables",
+          "Test MCP server startup",
+          "Push to GitHub repository",
+          "Configure GitHub secrets for CI/CD"
+        ]
+      },
+      "type": "object",
+      "namespace": "default",
+      "tags": [],
+      "metadata": {},
+      "owner": "system",
+      "accessLevel": "shared",
+      "createdAt": "2025-06-29T12:29:29.810Z",
+      "updatedAt": "2025-06-29T12:29:29.810Z",
+      "lastAccessedAt": "2025-06-29T12:29:29.810Z",
+      "version": 1,
+      "size": 857,
+      "compressed": false,
+      "checksum": "86702398e2c864378e7642b308596b72fab39dc4d2e17236540e4452cc4c6c22",
+      "references": [],
+      "dependencies": []
+    }
+  ],
+  "statistics": {
+    "overview": {
+      "totalEntries": 9,
+      "totalSize": 22444,
+      "compressedEntries": 8,
+      "compressionRatio": -24.189031505250874,
+      "indexSize": 450,
+      "memoryUsage": 6724096,
+      "diskUsage": 0
+    },
+    "distribution": {
+      "byNamespace": {
+        "default": {
+          "count": 9,
+          "size": 22444
+        }
+      },
+      "byType": {
+        "object": {
+          "count": 7,
+          "size": 12388
+        },
+        "string": {
+          "count": 2,
+          "size": 10056
+        }
+      },
+      "byOwner": {
+        "system": {
+          "count": 9,
+          "size": 22444
+        }
+      },
+      "byAccessLevel": {
+        "shared": {
+          "count": 9,
+          "size": 22444
+        }
+      }
+    },
+    "temporal": {
+      "entriesCreatedLast24h": 9,
+      "entriesUpdatedLast24h": 9,
+      "entriesAccessedLast24h": 9,
+      "oldestEntry": "2025-06-29T12:23:33.861Z",
+      "newestEntry": "2025-06-29T12:29:29.810Z"
+    },
+    "performance": {
+      "averageQueryTime": 0,
+      "averageWriteTime": 0,
+      "cacheHitRatio": 0,
+      "indexEfficiency": 0.95
+    },
+    "health": {
+      "expiredEntries": 0,
+      "orphanedReferences": 0,
+      "duplicateKeys": 0,
+      "corruptedEntries": 0,
+      "recommendedCleanup": false
+    },
+    "optimization": {
+      "suggestions": [],
+      "potentialSavings": {
+        "compression": 0,
+        "cleanup": 0,
+        "deduplication": 0
+      },
+      "indexOptimization": [
+        "Consider periodic index rebuilding for optimal performance"
+      ]
+    }
+  }
+}

@@ -32,6 +32,10 @@ This is not just a static analysis tool; it's a dynamic, scalable, and resilient
 - [Database Schema](#database-schema)
   - [SQLite Schema](#sqlite-schema)
   - [Neo4j Graph Model](#neo4j-graph-model)
+- [MCP Server Integration](#mcp-server-integration)
+  - [Claude Code Setup](#claude-code-setup)
+  - [Available MCP Tools](#available-mcp-tools)
+  - [Claude Flow Integration](#claude-flow-integration)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -333,6 +337,182 @@ The final graph in Neo4j is simple and powerful:
 -   **Relationships**:
     -   `:RELATIONSHIP`: A generic relationship type between two `:POI` nodes.
     -   Properties: `type` (e.g., 'CALLS', 'IMPORTS', 'CONTAINS'), `confidence`.
+
+## MCP Server Integration
+
+This project includes a Model Context Protocol (MCP) server that enables seamless integration with Claude Code and other MCP-compatible tools.
+
+### Claude Code Setup
+
+To use this project as an MCP server in Claude Code, add the following to your Claude configuration:
+
+```json
+{
+  "mcpServers": {
+    "cognitive-triangulation": {
+      "command": "node",
+      "args": ["node_modules/cognitive-triangulation-mcp/src/mcp-server.js"],
+      "env": {
+        "NEO4J_URI": "bolt://localhost:7687",
+        "NEO4J_USER": "neo4j",
+        "NEO4J_PASSWORD": "your-password",
+        "REDIS_URL": "redis://localhost:6379"
+      }
+    }
+  }
+}
+```
+
+#### Local Development Setup
+
+For local development with Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "cognitive-triangulation": {
+      "command": "node",
+      "args": ["/path/to/cognitive-triangulation-mcp/src/mcp-server.js"],
+      "env": {
+        "NEO4J_URI": "bolt://localhost:7687",
+        "NEO4J_USER": "neo4j",
+        "NEO4J_PASSWORD": "your-password",
+        "REDIS_URL": "redis://localhost:6379"
+      }
+    }
+  }
+}
+```
+
+### Available MCP Tools
+
+The MCP server exposes the following tools for use in Claude Code:
+
+#### `analyzeCodebase`
+Analyzes an entire codebase and builds a knowledge graph.
+
+**Parameters:**
+- `projectPath` (string): Path to the project directory
+- `options` (object): Analysis options
+  - `includePatterns` (array): File patterns to include
+  - `excludePatterns` (array): File patterns to exclude
+  - `maxConcurrency` (number): Maximum concurrent workers
+
+**Example:**
+```javascript
+await analyzeCodebase({
+  projectPath: "/path/to/project",
+  options: {
+    includePatterns: ["**/*.js", "**/*.ts"],
+    excludePatterns: ["**/node_modules/**", "**/test/**"],
+    maxConcurrency: 10
+  }
+});
+```
+
+#### `buildKnowledgeGraph`
+Builds or updates the knowledge graph from analyzed data.
+
+**Parameters:**
+- `projectId` (string): Unique project identifier
+- `options` (object): Build options
+
+#### `queryRelationships`
+Queries relationships in the knowledge graph.
+
+**Parameters:**
+- `query` (object): Query parameters
+  - `sourceType` (string): Type of source POI
+  - `targetType` (string): Type of target POI
+  - `relationshipType` (string): Type of relationship
+  - `minConfidence` (number): Minimum confidence score
+
+**Example:**
+```javascript
+await queryRelationships({
+  query: {
+    sourceType: "function",
+    relationshipType: "CALLS",
+    minConfidence: 0.8
+  }
+});
+```
+
+#### `extractPOIs`
+Extracts Points of Interest from specific files.
+
+**Parameters:**
+- `filePaths` (array): Array of file paths to analyze
+- `options` (object): Extraction options
+
+#### `cleanupGraph`
+Cleans up orphaned nodes and relationships in the graph.
+
+**Parameters:**
+- `projectId` (string): Project identifier
+- `options` (object): Cleanup options
+
+### Claude Flow Integration
+
+This project integrates seamlessly with Claude Flow for advanced orchestration:
+
+#### Starting Analysis via Claude Flow
+```bash
+# Analyze a codebase using the MCP server
+./claude-flow sparc "Analyze the React project in /path/to/project using cognitive-triangulation MCP"
+
+# Run a swarm analysis with multiple agents
+./claude-flow swarm "Deep code analysis of /path/to/project" \
+  --strategy analysis \
+  --mode distributed \
+  --parallel \
+  --output neo4j
+```
+
+#### Memory Integration
+Store analysis results in Claude Flow memory for cross-agent coordination:
+
+```bash
+# Store analysis results
+./claude-flow memory store "project_analysis" "POIs and relationships extracted from React project"
+
+# Retrieve for further processing
+./claude-flow memory get "project_analysis"
+```
+
+#### Workflow Automation
+Create automated workflows that leverage the MCP server:
+
+```yaml
+# cognitive-analysis-workflow.yml
+name: Cognitive Code Analysis
+steps:
+  - name: Analyze Codebase
+    tool: cognitive-triangulation.analyzeCodebase
+    params:
+      projectPath: "${PROJECT_PATH}"
+      options:
+        maxConcurrency: 20
+  
+  - name: Build Graph
+    tool: cognitive-triangulation.buildKnowledgeGraph
+    params:
+      projectId: "${PROJECT_ID}"
+  
+  - name: Query Critical Relationships
+    tool: cognitive-triangulation.queryRelationships
+    params:
+      query:
+        relationshipType: "DEPENDS_ON"
+        minConfidence: 0.9
+```
+
+Run the workflow:
+```bash
+./claude-flow workflow cognitive-analysis-workflow.yml \
+  --env PROJECT_PATH=/path/to/project \
+  --env PROJECT_ID=my-project
+```
 
 ## Contributing
 
